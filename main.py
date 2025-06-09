@@ -69,7 +69,7 @@ async def sync_products():
     limit = 20
     debug_info = []
     
-    while page <= 3:
+    while True:
         try:
             url = f"{daftra_url}/v2/api/entity/product/list/1?page={page}&limit={limit}"
             debug_info.append(f"🔄 جاري جلب الصفحة {page} من: {url}")
