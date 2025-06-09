@@ -68,7 +68,7 @@ async def sync_products():
     page = 1
     limit = 20
     
-    while page <= 1:
+    while page <= 2:
         try:
             response = requests.get(
                 f"{daftra_url}/v2/api/entity/product/list/1?page={page}&limit={limit}",
