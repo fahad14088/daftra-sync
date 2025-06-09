@@ -67,21 +67,27 @@ async def sync_products():
     total_synced = 0
     page = 1
     limit = 20
+    debug_info = []
     
-    while page <= 2:
+    while page <= 3:
         try:
-            response = requests.get(
-                f"{daftra_url}/v2/api/entity/product/list?page={page}&limit={limit}",
-                headers=daftra_headers
-            )
+            url = f"{daftra_url}/v2/api/entity/product/list/1?page={page}&limit={limit}"
+            debug_info.append(f"🔄 جاري جلب الصفحة {page} من: {url}")
+            
+            response = requests.get(url, headers=daftra_headers)
+            debug_info.append(f"📊 كود الاستجابة: {response.status_code}")
             
             if response.status_code != 200:
+                debug_info.append(f"❌ فشل في جلب الصفحة {page}")
                 break
                 
             data = response.json()
             products = data.get("data", [])
             
+            debug_info.append(f"📦 تم العثور على {len(products)} منتج في الصفحة {page}")
+            
             if not products:
+                debug_info.append(f"⚠️ الصفحة {page} فارغة - توقف")
                 break
                 
             for product in products:
@@ -96,6 +102,7 @@ async def sync_products():
                     "supplier_code": product.get("supplier_code", "")
                 }
                 
+                # تحقق من وجود المنتج في Supabase
                 check_response = requests.get(
                     f"{supabase_url}/rest/v1/products?product_code=eq.{product_data['product_code']}",
                     headers={
@@ -109,6 +116,7 @@ async def sync_products():
                 count = check_response.headers.get("content-range", "").split("/")[-1]
                 
                 if int(count or 0) == 0:
+                    # إضافة المنتج لـ Supabase
                     insert_response = requests.post(
                         f"{supabase_url}/rest/v1/products",
                         headers={
@@ -121,13 +129,24 @@ async def sync_products():
                     
                     if insert_response.status_code == 201:
                         total_synced += 1
+                        debug_info.append(f"✅ تم إضافة منتج: {product_data['product_code']}")
+                    else:
+                        debug_info.append(f"❌ فشل إضافة منتج: {product_data['product_code']}")
+                else:
+                    debug_info.append(f"⏭️ منتج موجود مسبقاً: {product_data['product_code']}")
             
             page += 1
             
         except Exception as e:
+            debug_info.append(f"❌ خطأ في الصفحة {page}: {str(e)}")
             break
     
-    return {"message": f"تم سحب {total_synced} منتج بنجاح", "total_synced": total_synced}
+    return {
+        "message": f"تم سحب {total_synced} منتج بنجاح", 
+        "total_synced": total_synced,
+        "debug_info": debug_info,
+        "pages_processed": page - 1
+    }
 
 @app.get('/{path:path}')
 async def html_landing() -> HTMLResponse:
