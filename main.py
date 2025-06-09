@@ -10,27 +10,27 @@ from pydantic import BaseModel, Field
 
 app = FastAPI()
 
+class User(BaseModel):
+    id: int
+    name: str
+    dob: date = Field(title='Date of Birth')
 
-
-
+# define some users
+users = [
+    User(id=1, name='John', dob=date(1990, 1, 1)),
+    User(id=2, name='Jack', dob=date(1991, 1, 1)),
+]
 
 @app.get("/api/", response_model=FastUI, response_model_exclude_none=True)
 def users_table() -> list[AnyComponent]:
-    """
-    Show a table of four users, `/api` is the endpoint the frontend will connect to
-    when a user visits `/` to fetch components to render.
-    """
     return [
-        c.Page(  # Page provides a basic container for components
+        c.Page(
             components=[
-                c.Heading(text='Users', level=2),  # renders `<h2>Users</h2>`
+                c.Heading(text='Users', level=2),
                 c.Table(
                     data=users,
-                    # define two columns for the table
                     columns=[
-                        # the first is the users, name rendered as a link to their profile
                         DisplayLookup(field='name', on_click=GoToEvent(url='/user/{id}/')),
-                        # the second is the date of birth, rendered as a date
                         DisplayLookup(field='dob', mode=DisplayMode.date),
                     ],
                 ),
@@ -38,12 +38,8 @@ def users_table() -> list[AnyComponent]:
         ),
     ]
 
-
 @app.get("/api/user/{user_id}/", response_model=FastUI, response_model_exclude_none=True)
 def user_profile(user_id: int) -> list[AnyComponent]:
-    """
-    User profile page, the frontend will fetch this when the user visits `/user/{id}/`.
-    """
     try:
         user = next(u for u in users if u.id == user_id)
     except StopIteration:
@@ -58,16 +54,13 @@ def user_profile(user_id: int) -> list[AnyComponent]:
         ),
     ]
 
-
 @app.post("/sync-products")
 async def sync_products():
     """سحب المنتجات من دفترة وإرسالها لـ Supabase"""
     
-    # إعدادات دفترة
     daftra_url = "https://shadowpeace.daftra.com"
     daftra_headers = {"apikey": "024ee6d1c1bf36dcbee7978191d81df23cc11a3b"}
     
-    # إعدادات Supabase
     supabase_url = "https://wuqbovrurauffztbkbse.supabase.co"
     supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1cWJvdnJ1cmF1ZmZ6dGJrYnNlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0Nzg3MTA0NywiZXhwIjoyMDYzNDQ3MDQ3fQ.6ekq6VV2gcyw4uOHfscO9vIzUBSGDk_yweiGOGSPyFo"
     
@@ -75,9 +68,8 @@ async def sync_products():
     page = 1
     limit = 20
     
-    while page <= 10:  # نسحب 10 صفحات كل مرة (200 منتج)
+    while page <= 10:
         try:
-            # جلب البيانات من دفترة
             response = requests.get(
                 f"{daftra_url}/v2/api/entity/product/list/1?page={page}&limit={limit}",
                 headers=daftra_headers
@@ -92,7 +84,6 @@ async def sync_products():
             if not products:
                 break
                 
-            # معالجة كل منتج
             for product in products:
                 product_data = {
                     "name": product.get("name", ""),
@@ -105,7 +96,6 @@ async def sync_products():
                     "supplier_code": product.get("supplier_code", "")
                 }
                 
-                # تحقق من وجود المنتج في Supabase
                 check_response = requests.get(
                     f"{supabase_url}/rest/v1/products?product_code=eq.{product_data['product_code']}",
                     headers={
@@ -119,7 +109,6 @@ async def sync_products():
                 count = check_response.headers.get("content-range", "").split("/")[-1]
                 
                 if int(count or 0) == 0:
-                    # إضافة المنتج لـ Supabase
                     insert_response = requests.post(
                         f"{supabase_url}/rest/v1/products",
                         headers={
@@ -140,12 +129,6 @@ async def sync_products():
     
     return {"message": f"تم سحب {total_synced} منتج بنجاح", "total_synced": total_synced}
 
-
 @app.get('/{path:path}')
 async def html_landing() -> HTMLResponse:
-    """Simple HTML page which serves the React app, comes last as it matches all paths."""
     return HTMLResponse(prebuilt_html(title='FastUI Demo'))
-    @app.post("/sync-products")
-async def sync_products():
-    # الكود اللي أرسلته
-
