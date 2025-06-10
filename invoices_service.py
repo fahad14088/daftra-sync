@@ -1,11 +1,6 @@
 # invoices_service.py
+import os, requests, time, uuid
 
-import os
-import requests
-import time
-import uuid
-
-# إعدادات من البيئة
 DAFTRA_URL    = os.getenv("DAFTRA_URL")
 DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL  = os.getenv("SUPABASE_URL")
@@ -19,46 +14,33 @@ HEADERS_SB     = {
 }
 
 def fetch_with_retry(url, headers, retries=3, timeout=30):
-    """
-    محاولة جلب البيانات من URL مع إعادة المحاولة عند الفشل.
-    """
     for i in range(retries):
         try:
             r = requests.get(url, headers=headers, timeout=timeout)
             if r.status_code == 200:
                 return r.json()
-        except Exception:
+        except:
             pass
-        time.sleep((i + 1) * 5)
+        time.sleep((i+1)*5)
     return {}
 
 def sync_invoices():
-    """
-    1) يبني خريطة daftra_product_id -> product_code
-    2) يجلب دفعات الفواتير من دفترة مع فلتر branch_id
-    3) يعمل upsert للفواتير (on_conflict=id)
-    4) يحذف ثم يضيف البنود الجديدة لمنع التكرار
-    """
-    # 1) خريطة المنتجات
+    # 1) بني خريطة المنتجات
     resp_map = requests.get(
         f"{SUPABASE_URL}/rest/v1/products?select=daftra_product_id,product_code",
-        headers=HEADERS_SB,
-        timeout=10
+        headers=HEADERS_SB, timeout=10
     )
-    prod_map = {
-        r["daftra_product_id"]: r["product_code"]
-        for r in (resp_map.json() if resp_map.status_code == 200 else [])
-    }
+    prod_map = {r["daftra_product_id"]: r["product_code"]
+                for r in (resp_map.json() if resp_map.status_code==200 else [])}
 
     total_inv = 0
     total_itm = 0
     limit = 20
-    branches = [1, 2]  # معرفات الفروع المطلوبة
+    branches = [1, 2]
 
     for branch_id in branches:
         page = 1
         while True:
-            # 2) جلب قائمة الفواتير مع فلتر الفرع
             list_url = (
                 f"{DAFTRA_URL}/v2/api/entity/invoice/list/1"
                 f"?filter[branch_id]={branch_id}&page={page}&limit={limit}"
@@ -71,45 +53,43 @@ def sync_invoices():
 
             for raw in invs:
                 inv_id = raw.get("id")
+                inv_no = raw.get("no")
                 if not inv_id:
                     continue
 
-                # جلب تفاصيل الفاتورة
-                show_url = f"{DAFTRA_URL}/v2/api/entity/invoice/show/1/{inv_id}"
-                det = fetch_with_retry(show_url, HEADERS_DAFTRA)
-                inv = det.get("data", {}).get("Invoice", {})
-                if not inv:
-                    continue
+                # حاول تجيب البنود من raw أولًا
+                items = raw.get("invoice_item") or []
+                if not items:
+                    # fallback: جلب التفاصيل من المسار الصحيح
+                    det = fetch_with_retry(f"{DAFTRA_URL}/v2/api/entity/invoice/{inv_id}.json", HEADERS_DAFTRA)
+                    inv_data = det.get("data", {}).get("Invoice", {})
+                    items = inv_data.get("InvoiceItem") or inv_data.get("invoice_item") or []
+                    raw = inv_data
 
-                # 3) upsert الفاتورة
+                # 2) upsert الفاتورة
                 inv_payload = {
-                    "id":           str(inv.get("id")),
-                    "invoice_no":   inv.get("no", ""),
-                    "invoice_date": inv.get("date", ""),
-                    "total":        str(inv.get("total", 0))
+                    "id":           str(inv_id),
+                    "invoice_no":   inv_no or "",
+                    "invoice_date": raw.get("date",""),
+                    "total":        str(raw.get("total",0))
                 }
                 requests.post(
                     f"{SUPABASE_URL}/rest/v1/invoices?on_conflict=id",
                     headers=HEADERS_SB,
-                    json=inv_payload,
-                    timeout=10
+                    json=inv_payload
                 )
                 total_inv += 1
 
-                # 4a) حذف البنود القديمة للفاتورة
+                # 3) مسح البنود القديمة ثم إعادة الإضافة
                 requests.delete(
                     f"{SUPABASE_URL}/rest/v1/invoice_items?invoice_id=eq.{inv_id}",
-                    headers=HEADERS_SB,
-                    timeout=10
+                    headers=HEADERS_SB
                 )
-
-                # 4b) إضافة البنود الجديدة
-                items = inv.get("invoice_item") or []
                 if not isinstance(items, list):
                     items = [items]
                 for it in items:
                     qty = float(it.get("quantity") or 0)
-                    if qty <= 0:
+                    if qty<=0:
                         continue
                     pid = str(it.get("product_id"))
                     item_payload = {
@@ -124,8 +104,7 @@ def sync_invoices():
                     requests.post(
                         f"{SUPABASE_URL}/rest/v1/invoice_items",
                         headers=HEADERS_SB,
-                        json=item_payload,
-                        timeout=10
+                        json=item_payload
                     )
                     total_itm += 1
 
@@ -135,5 +114,5 @@ def sync_invoices():
     print(f"✅ Done: {total_inv} invoices, {total_itm} items")
     return {"invoices": total_inv, "items": total_itm}
 
-if __name__ == "__main__":
+if __name__=="__main__":
     sync_invoices()
