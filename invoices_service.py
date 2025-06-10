@@ -1,4 +1,4 @@
-# invoices_service.py - الكود الكامل مع الحل الجذري
+# invoices_service.py - الكود الكامل مع إضافة id للعناصر
 import requests
 import time
 from datetime import datetime
@@ -59,7 +59,7 @@ async def sync_invoices():
     start_time = time.time()
     
     try:
-        debug_info.append("🧪 اختبار فاتورة واحدة مع حل العناصر")
+        debug_info.append("🧪 اختبار فاتورة واحدة مع إضافة ID للعناصر")
         
         # جلب فاتورة واحدة فقط للاختبار
         url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=1"
@@ -184,7 +184,7 @@ async def sync_invoices():
                 "debug_info": debug_info
             }
         
-        # تجربة حفظ العناصر - حلول متعددة
+        # تجربة حفظ العناصر مع إضافة ID
         items_saved = 0
         
         for i, item in enumerate(items[:3]):  # أول 3 عناصر فقط
@@ -197,11 +197,12 @@ async def sync_invoices():
             if quantity and float(quantity) > 0:
                 total_price = float(quantity) * float(unit_price or 0)
                 
-                # تجربة عدة حلول
+                # تجربة عدة حلول مع إضافة ID
                 solutions = [
                     {
-                        "name": "بدون product_id",
+                        "name": "الحل الأول: ID + invoice_id فقط",
                         "data": {
+                            "id": str(uuid.uuid4()),  # إضافة ID
                             "invoice_id": invoice_uuid,
                             "quantity": str(quantity),
                             "unit_price": str(unit_price or 0),
@@ -209,8 +210,9 @@ async def sync_invoices():
                         }
                     },
                     {
-                        "name": "product_id كـ UUID جديد",
+                        "name": "الحل الثاني: ID + product_id جديد",
                         "data": {
+                            "id": str(uuid.uuid4()),  # إضافة ID
                             "invoice_id": invoice_uuid,
                             "product_id": str(uuid.uuid4()),
                             "quantity": str(quantity),
@@ -219,8 +221,9 @@ async def sync_invoices():
                         }
                     },
                     {
-                        "name": "product_id كما هو",
+                        "name": "الحل الثالث: ID + product_id الأصلي",
                         "data": {
+                            "id": str(uuid.uuid4()),  # إضافة ID
                             "invoice_id": invoice_uuid,
                             "product_id": str(product_id) if product_id else str(uuid.uuid4()),
                             "quantity": str(quantity),
@@ -229,8 +232,9 @@ async def sync_invoices():
                         }
                     },
                     {
-                        "name": "بيانات أساسية فقط",
+                        "name": "الحل الرابع: ID + بيانات أساسية",
                         "data": {
+                            "id": str(uuid.uuid4()),  # إضافة ID
                             "invoice_id": invoice_uuid,
                             "quantity": "1",
                             "unit_price": "10",
