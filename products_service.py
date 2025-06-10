@@ -1,12 +1,13 @@
+# products_service.py
 import os
 import requests
 import time
 
-# قراءة الإعدادات من المتغيرات البيئية
-DAFTRA_URL     = os.getenv("DAFTRA_URL")
-DAFTRA_APIKEY  = os.getenv("DAFTRA_APIKEY")
-SUPABASE_URL   = os.getenv("SUPABASE_URL")
-SUPABASE_KEY   = os.getenv("SUPABASE_KEY")
+# إعدادات من البيئة
+DAFTRA_URL    = os.getenv("DAFTRA_URL")
+DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
+SUPABASE_URL  = os.getenv("SUPABASE_URL")
+SUPABASE_KEY  = os.getenv("SUPABASE_KEY")
 
 HEADERS_DAFTRA = {"apikey": DAFTRA_APIKEY}
 HEADERS_SB     = {
@@ -14,6 +15,8 @@ HEADERS_SB     = {
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json"
 }
+
+# جلب مع retry
 
 def fetch_with_retry(url, headers, retries=3, timeout=30):
     for i in range(retries):
@@ -26,6 +29,7 @@ def fetch_with_retry(url, headers, retries=3, timeout=30):
         time.sleep((i+1)*5)
     return None
 
+# مزامنة المنتجات
 def sync_products():
     total = 0
     page = 1
@@ -38,12 +42,18 @@ def sync_products():
         if not items:
             break
 
-        for p in items:
+        for prod in items:
+            # اختيار الحقل الصحيح للكود
+            code = prod.get("code") or prod.get("product_code") or prod.get("supplier_code") or ""
             payload = {
-                "daftra_product_id": str(p.get("id")),
-                "product_code":       p.get("code", ""),
-                "name":              p.get("name", ""),
-                "stock_balance":     str(p.get("stock_balance", 0))
+                "daftra_product_id": str(prod.get("id")),
+                "product_code":       code,
+                "name":               prod.get("name", ""),
+                "stock_balance":      str(prod.get("stock_balance", 0)),
+                "buy_price":          str(prod.get("buy_price", 0)),
+                "average_price":      str(prod.get("average_price", 0)),
+                "minimum_price":      str(prod.get("minimum_price", 0)),
+                "supplier_code":      prod.get("supplier_code", "")
             }
             resp = requests.post(
                 f"{SUPABASE_URL}/rest/v1/products",
@@ -51,7 +61,7 @@ def sync_products():
                 json=payload,
                 timeout=10
             )
-            if resp.status_code in (200,201):
+            if resp.status_code in (200, 201):
                 total += 1
 
         page += 1
