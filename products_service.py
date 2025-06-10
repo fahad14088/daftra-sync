@@ -1,3 +1,4 @@
+# products_service.py
 import os
 import requests
 import time
@@ -13,7 +14,6 @@ HEADERS_SB     = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
-    # يخبر PostgREST بعمل merge للسجلات الموجودة
     "Prefer": "resolution=merge-duplicates"
 }
 
@@ -21,10 +21,11 @@ def fetch_with_retry(url, headers, retries=3, timeout=30):
     for i in range(retries):
         try:
             r = requests.get(url, headers=headers, timeout=timeout)
+            print(f"> GET {url} → {r.status_code}")
             if r.status_code == 200:
                 return r.json()
-        except Exception:
-            pass
+        except Exception as e:
+            print("! fetch error:", e)
         time.sleep((i + 1) * 5)
     return None
 
@@ -37,13 +38,29 @@ def sync_products():
         url = f"{DAFTRA_URL}/v2/api/entity/product/list/1?page={page}&limit={limit}"
         data = fetch_with_retry(url, HEADERS_DAFTRA)
         items = data.get("data", []) if data else []
+        print(f"> Page {page}: found {len(items)} items")
         if not items:
             break
 
-        for prod in items:
-            code = prod.get("code") or prod.get("product_code") or prod.get("supplier_code") or ""
+        for raw in items:
+            # فك التغليف لو جاي بالشكل {"Product": { ... }}
+            prod = raw.get("Product") if isinstance(raw, dict) and "Product" in raw else raw
+
+            pid = prod.get("id")
+            if not pid:
+                print("! skipping item without id:", prod)
+                continue
+
+            # استخرج الكود من أي حقل متوفر
+            code = (
+                prod.get("code")
+                or prod.get("product_code")
+                or prod.get("supplier_code")
+                or ""
+            )
+
             payload = {
-                "daftra_product_id": str(prod.get("id")),
+                "daftra_product_id": str(pid),
                 "product_code":       code,
                 "name":               prod.get("name", ""),
                 "stock_balance":      str(prod.get("stock_balance", 0)),
@@ -53,21 +70,22 @@ def sync_products():
                 "supplier_code":      prod.get("supplier_code", "")
             }
 
-            # upsert عبر on_conflict على العمود daftra_product_id
+            print(">> upsert product:", payload)
             resp = requests.post(
                 f"{SUPABASE_URL}/rest/v1/products?on_conflict=daftra_product_id",
                 headers=HEADERS_SB,
                 json=payload,
                 timeout=10
             )
+            print(f"   → {resp.status_code}")
             if resp.status_code in (200, 201):
                 total += 1
 
         page += 1
         time.sleep(1)
 
+    print(f"✅ Done sync_products: {total} records")
     return {"synced": total}
 
 if __name__ == "__main__":
-    res = sync_products()
-    print(f"✅ تم مزامنة المنتجات: {res['synced']} سجل")
+    sync_products()
