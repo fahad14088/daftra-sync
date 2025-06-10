@@ -1,12 +1,10 @@
 import os
 from datetime import datetime, date
 import time
-import asyncio
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastui import FastUI, AnyComponent, prebuilt_html, components as c
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 import logging
@@ -18,15 +16,21 @@ logger = logging.getLogger(__name__)
 # استيراد الخدمات
 try:
     from invoices_service import run_sync as sync_invoices_sync, test_connections
-    logger.info("✅ تم تحميل خدمة الفواتير بنجاح")
+    logger.info("✅ تم تحميل خدمة الفواتير")
 except ImportError as e:
-    logger.error(f"❌ خطأ في استيراد خدمة الفواتير: {e}")
+    logger.error(f"❌ خطأ في استيراد invoices_service: {e}")
+
+try:
+    from products_service import sync_products
+    logger.info("✅ تم تحميل خدمة المنتجات")
+except ImportError as e:
+    logger.warning(f"⚠️ لم يتم العثور على products_service: {e}")
 
 # إنشاء التطبيق
 app = FastAPI(
-    title="Daftra Sync API",
-    description="نظام مزامنة البيانات من دفترة إلى Supabase",
-    version="2.0.0",
+    title="🏪 Daftra Sync API",
+    description="نظام مزامنة البيانات من دفترة إلى Supabase على Railway",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -50,30 +54,19 @@ class SyncRequest(BaseModel):
     limit: int = Field(default=5, ge=1, le=50, description="عدد العناصر لكل صفحة")
     check_existing: bool = Field(default=False, description="فحص العناصر الموجودة")
 
-class SyncResponse(BaseModel):
-    success: bool
-    message: str
-    timestamp: str
-    service: str
-    duration: str
-    total_processed: int
-    total_synced: int
-    errors_count: int
-    warnings_count: int
-    details: Optional[Dict[str, Any]] = None
-
 @app.on_event("startup")
 async def startup_event():
-    """أحداث بدء التشغيل"""
-    logger.info("🚀 بدء تشغيل Daftra Sync API على Railway")
+    """بدء التشغيل"""
+    logger.info("🚂 تشغيل Daftra Sync على Railway")
+    logger.info("🗄️ قاعدة البيانات: Supabase")
     
     # فحص الاتصالات
     try:
         connections_ok = test_connections()
         if connections_ok:
-            logger.info("✅ اتصال Supabase يعمل بشكل صحيح")
+            logger.info("✅ جميع الاتصالات تعمل")
         else:
-            logger.warning("⚠️ مشاكل في الاتصال")
+            logger.warning("⚠️ مشاكل في الاتصالات")
     except Exception as e:
         logger.error(f"❌ خطأ في فحص الاتصالات: {e}")
 
@@ -81,33 +74,32 @@ async def startup_event():
 async def home():
     """الصفحة الرئيسية"""
     uptime = time.time() - app_start_time
-    uptime_str = f"{uptime//3600:.0f}س {(uptime%3600)//60:.0f}د"
+    uptime_str = f"{uptime//3600:.0f}س {(uptime%3600)//60:.0f}د {uptime%60:.0f}ث"
     
     return {
-        "service": "🏪 Daftra Sync API",
-        "version": "2.0.0",
-        "status": "🟢 يعمل على Railway",
-        "database": "📊 Supabase متصل",
-        "uptime": uptime_str,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "🏪": "Daftra Sync API",
+        "📍": "Railway Platform", 
+        "🗄️": "Supabase Database",
+        "⏱️": uptime_str,
+        "🕐": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "🚀": "نظام مزامنة دفترة",
         "endpoints": {
-            "sync": {
+            "🔄": {
                 "/sync-invoices": "مزامنة فواتير المبيعات",
-                "/sync-invoices-quick": "مزامنة سريعة (3 فواتير)",
-                "/sync-invoices-test": "اختبار المزامنة"
+                "/sync-invoices-quick": "مزامنة سريعة",
+                "/sync-invoices-test": "اختبار المزامنة",
+                "/sync-products": "مزامنة المنتجات"
             },
-            "monitoring": {
-                "/health": "فحص صحة النظام",
-                "/status": "حالة قاعدة البيانات",
+            "📊": {
+                "/health": "صحة النظام",
+                "/status": "حالة قاعدة البيانات", 
                 "/logs": "آخر العمليات"
             },
-            "docs": {
-                "/docs": "وثائق API",
-                "/redoc": "وثائق مفصلة"
+            "📚": {
+                "/docs": "وثائق Swagger",
+                "/redoc": "وثائق ReDoc"
             }
-        },
-        "supabase_project": "wuqbovrurauffztbkbse",
-        "railway_project": "1336874a-1120-4f18-87c2-b5b9b1e0d439"
+        }
     }
 
 @app.get("/health")
@@ -118,25 +110,25 @@ async def health_check():
         uptime = time.time() - app_start_time
         
         return {
-            "status": "healthy" if connections_ok else "degraded",
-            "platform": "Railway",
-            "database": "Supabase",
-            "uptime_seconds": round(uptime, 2),
+            "status": "🟢 صحي" if connections_ok else "🟡 مشاكل جزئية",
+            "platform": "🚂 Railway",
+            "database": "📊 Supabase", 
+            "uptime": f"{uptime:.0f} ثانية",
             "connections": {
-                "daftra_api": connections_ok,
-                "supabase_db": connections_ok
+                "daftra_api": "✅" if connections_ok else "❌",
+                "supabase_db": "✅" if connections_ok else "❌"
             },
             "timestamp": datetime.now().isoformat(),
             "environment": os.environ.get("RAILWAY_ENVIRONMENT", "production")
         }
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"خطأ في فحص الصحة: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"خطأ صحة النظام: {str(e)}")
 
-@app.get("/sync-invoices", response_model=SyncResponse)
-async def sync_invoices_endpoint():
-    """مزامنة الفواتير - الإعدادات الافتراضية"""
+@app.get("/sync-invoices")
+async def sync_invoices():
+    """مزامنة الفواتير - الإعداد الافتراضي"""
     try:
-        logger.info("🔄 بدء مزامنة الفواتير على Railway")
+        logger.info("🔄 بدء مزامنة الفواتير")
         
         start_time = time.time()
         result = sync_invoices_sync(max_pages=3, limit=5, check_existing=False)
@@ -144,49 +136,71 @@ async def sync_invoices_endpoint():
         
         if result.get("success", False):
             summary = result.get("summary", {})
-            response = SyncResponse(
-                success=True,
-                message=f"✅ تم سحب {summary.get('total_synced', 0)} فاتورة بنجاح",
-                timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                service="invoices",
-                duration=summary.get("duration_formatted", f"{duration:.1f}ث"),
-                total_processed=summary.get("total_processed", 0),
-                total_synced=summary.get("total_synced", 0),
-                errors_count=summary.get("errors_count", 0),
-                warnings_count=summary.get("warnings_count", 0),
-                details={
-                    "platform": "Railway",
-                    "database": "Supabase",
-                    "total_items": summary.get("total_items", 0),
-                    "success_rate": summary.get("success_rate", "0%"),
-                    "recent_errors": result.get("recent_errors", [])[-2:]
+            
+            response_data = {
+                "success": True,
+                "message": f"✅ تم سحب {summary.get('total_synced', 0)} فاتورة بنجاح",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "service": "📋 invoices",
+                "platform": "🚂 Railway → 📊 Supabase",
+                "duration": summary.get("duration_formatted", f"{duration:.1f}ث"),
+                "statistics": {
+                    "معالج": summary.get("total_processed", 0),
+                    "محفوظ": summary.get("total_synced", 0),
+                    "عناصر": summary.get("total_items", 0),
+                    "معدل_النجاح": summary.get("success_rate", "0%"),
+                    "أخطاء": summary.get("errors_count", 0),
+                    "تحذيرات": summary.get("warnings_count", 0)
+                },
+                "details": {
+                    "avg_items_per_invoice": summary.get("avg_items_per_invoice", 0),
+                    "recent_errors": result.get("recent_errors", [])[-2:] if result.get("recent_errors") else []
                 }
-            )
+            }
             
             # حفظ النتائج
-            last_sync_results.update(response.dict())
-            logger.info(f"✅ مزامنة ناجحة: {response.total_synced} فاتورة")
+            last_sync_results.update(response_data)
+            logger.info(f"✅ نجحت المزامنة: {summary.get('total_synced', 0)} فاتورة")
             
-            return response
+            return response_data
+            
         else:
             error_msg = result.get("error", "خطأ غير معروف")
             logger.error(f"❌ فشلت المزامنة: {error_msg}")
-            raise HTTPException(status_code=500, detail=error_msg)
+            
+            error_response = {
+                "success": False,
+                "message": f"❌ فشلت المزامنة: {error_msg}",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "service": "📋 invoices",
+                "platform": "🚂 Railway"
+            }
+            
+            last_sync_results.update(error_response)
+            raise HTTPException(status_code=500, detail=error_response)
             
     except HTTPException:
         raise
     except Exception as e:
-        error_msg = f"خطأ في المزامنة: {str(e)}"
+        error_msg = f"خطأ غير متوقع: {str(e)}"
         logger.error(error_msg)
-        raise HTTPException(status_code=500, detail=error_msg)
+        
+        error_response = {
+            "success": False,
+            "message": f"❌ {error_msg}",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        last_sync_results.update(error_response)
+        raise HTTPException(status_code=500, detail=error_response)
 
 @app.get("/sync-invoices-quick")
 async def sync_invoices_quick():
-    """مزامنة سريعة - فاتورة واحدة للاختبار"""
+    """مزامنة سريعة - للاختبار"""
     try:
         logger.info("⚡ مزامنة سريعة")
         
-        result = sync_invoices_sync(max_pages=1, limit=3, check_existing=False)
+        result = sync_invoices_sync(max_pages=1, limit=2, check_existing=False)
         
         if result.get("success", False):
             summary = result.get("summary", {})
@@ -194,53 +208,22 @@ async def sync_invoices_quick():
                 "success": True,
                 "message": f"⚡ مزامنة سريعة: {summary.get('total_synced', 0)} فاتورة",
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "platform": "🚂 Railway ⚡",
                 "duration": summary.get("duration_formatted", "غير محدد"),
-                "details": summary
+                "quick_stats": {
+                    "processed": summary.get("total_processed", 0),
+                    "synced": summary.get("total_synced", 0),
+                    "items": summary.get("total_items", 0)
+                }
             }
         else:
             return {
                 "success": False,
-                "message": f"❌ فشلت المزامنة السريعة: {result.get('error', 'خطأ غير معروف')}",
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "message": f"❌ فشل الاختبار: {result.get('error', 'خطأ غير معروف')}",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "platform": "🚂 Railway"
             }
             
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"❌ خطأ في المزامنة السريعة: {str(e)}",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-
-@app.get("/sync-invoices-test")
-async def test_sync():
-    """اختبار الاتصال والمزامنة"""
-    try:
-        # فحص الاتصالات أولاً
-        connections_ok = test_connections()
-        
-        if not connections_ok:
-            return {
-                "success": False,
-                "message": "❌ فشل فحص الاتصالات",
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "suggestions": [
-                    "تحقق من اتصال الإنترنت",
-                    "تحقق من صحة API keys",
-                    "تحقق من حالة خوادم Daftra و Supabase"
-                ]
-            }
-        
-        # اختبار مزامنة فاتورة واحدة
-        result = sync_invoices_sync(max_pages=1, limit=1, check_existing=False)
-        
-        return {
-            "success": result.get("success", False),
-            "message": "🧪 اختبار المزامنة اكتمل",
-            "connections": "✅ الاتصالات تعمل",
-            "sync_result": result.get("summary", {}),
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
     except Exception as e:
         return {
             "success": False,
@@ -248,51 +231,142 @@ async def test_sync():
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
-@app.get("/status")
-async def database_status():
-    """حالة قاعدة البيانات"""
+@app.get("/sync-invoices-test")
+async def test_sync():
+    """اختبار شامل للمزامنة"""
+    test_results = {
+        "🧪": "اختبار المزامنة",
+        "⏰": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "🚂": "Railway Platform"
+    }
+    
     try:
+        # 1. فحص الاتصالات
+        logger.info("🔍 فحص الاتصالات...")
         connections_ok = test_connections()
+        test_results["🔗"] = "✅ الاتصالات سليمة" if connections_ok else "❌ مشاكل في الاتصالات"
+        
+        if not connections_ok:
+            test_results["❌"] = "فشل فحص الاتصالات"
+            test_results["💡"] = [
+                "تحقق من اتصال الإنترنت",
+                "تحقق من Daftra API key", 
+                "تحقق من Supabase connection"
+            ]
+            return test_results
+        
+        # 2. اختبار مزامنة فاتورة واحدة
+        logger.info("🧪 اختبار مزامنة...")
+        result = sync_invoices_sync(max_pages=1, limit=1, check_existing=False)
+        
+        if result.get("success", False):
+            summary = result.get("summary", {})
+            test_results["✅"] = "نجح الاختبار"
+            test_results["📊"] = {
+                "معالج": summary.get("total_processed", 0),
+                "محفوظ": summary.get("total_synced", 0),
+                "مدة": summary.get("duration_formatted", "غير محدد")
+            }
+        else:
+            test_results["❌"] = f"فشل الاختبار: {result.get('error', 'خطأ غير معروف')}"
+        
+        return test_results
+        
+    except Exception as e:
+        test_results["❌"] = f"خطأ في الاختبار: {str(e)}"
+        return test_results
+
+@app.get("/sync-products")
+async def sync_products_endpoint():
+    """مزامنة المنتجات"""
+    try:
+        if 'sync_products' not in globals():
+            return {
+                "success": False,
+                "message": "❌ خدمة المنتجات غير متاحة",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "note": "تأكد من وجود ملف products_service.py"
+            }
+        
+        logger.info("🛍️ بدء مزامنة المنتجات")
+        result = await sync_products()
         
         return {
-            "database": {
-                "provider": "Supabase",
-                "project_id": "wuqbovrurauffztbkbse",
-                "status": "🟢 متصل" if connections_ok else "🔴 غير متصل",
-                "tables": ["invoices", "invoice_items", "products"],
-                "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            },
-            "api": {
-                "daftra_status": "🟢 متصل" if connections_ok else "🔴 غير متصل",
-                "base_url": "https://shadowpeace.daftra.com"
-            },
-            "platform": {
-                "hosting": "Railway",
-                "environment": os.environ.get("RAILWAY_ENVIRONMENT", "production"),
-                "project_id": "1336874a-1120-4f18-87c2-b5b9b1e0d439"
-            }
+            "success": True,
+            "message": f"🛍️ تم سحب {result.get('total_synced', 0)} منتج",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "service": "products",
+            "platform": "🚂 Railway → 📊 Supabase",
+            "details": result
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"خطأ في جلب حالة قاعدة البيانات: {str(e)}")
+        error_msg = f"خطأ في مزامنة المنتجات: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "message": f"❌ {error_msg}",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+@app.get("/status")
+async def database_status():
+    """حالة قاعدة البيانات والنظام"""
+    try:
+        connections_ok = test_connections()
+        uptime = time.time() - app_start_time
+        
+        return {
+            "🗄️": {
+                "provider": "Supabase",
+                "project": "wuqbovrurauffztbkbse",
+                "status": "🟢 متصل" if connections_ok else "🔴 منقطع",
+                "tables": ["invoices", "invoice_items", "products"],
+                "url": "https://supabase.com/dashboard/project/wuqbovrurauffztbkbse"
+            },
+            "🌐": {
+                "daftra_api": "🟢 متصل" if connections_ok else "🔴 منقطع",
+                "base_url": "https://shadowpeace.daftra.com"
+            },
+            "🚂": {
+                "platform": "Railway",
+                "environment": os.environ.get("RAILWAY_ENVIRONMENT", "production"),
+                "project": "1336874a-1120-4f18-87c2-b5b9b1e0d439",
+                "uptime": f"{uptime//60:.0f} دقيقة"
+            },
+            "⏰": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"خطأ في حالة قاعدة البيانات: {str(e)}")
 
 @app.get("/logs")
 async def recent_logs():
-    """آخر العمليات والسجلات"""
+    """آخر العمليات"""
+    uptime_minutes = (time.time() - app_start_time) // 60
+    
     return {
-        "last_sync": last_sync_results if last_sync_results else "لم يتم تنفيذ مزامنة بعد",
-        "uptime": f"{(time.time() - app_start_time)//60:.0f} دقيقة",
-        "platform": "Railway + Supabase",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "📋": "آخر العمليات",
+        "🕐": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "⏱️": f"{uptime_minutes:.0f} دقيقة",
+        "🚂": "Railway + Supabase",
+        "📊": last_sync_results if last_sync_results else {
+            "message": "لم يتم تنفيذ أي مزامنة بعد",
+            "suggestion": "جرب /sync-invoices-test للاختبار"
+        }
     }
 
-# الحصول على البورت من البيئة (Railway)
+# للتشغيل المحلي والـ Railway
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     
     print("🚂 تشغيل على Railway...")
     print(f"📍 البورت: {port}")
     print("🗄️ قاعدة البيانات: Supabase")
+    print("🌐 الروابط:")
+    print(f"   • الرئيسية: http://localhost:{port}/")
+    print(f"   • الوثائق: http://localhost:{port}/docs")
+    print(f"   • الصحة: http://localhost:{port}/health")
     
     uvicorn.run(
         "main:app",
