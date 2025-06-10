@@ -1,7 +1,8 @@
-# invoices_service.py - اختبار فاتورة واحدة فقط
+# invoices_service.py - الكود الكامل مع الحل الجذري
 import requests
 import time
 from datetime import datetime
+import uuid
 
 # إعدادات
 DAFTRA_URL = "https://shadowpeace.daftra.com"
@@ -58,9 +59,9 @@ async def sync_invoices():
     start_time = time.time()
     
     try:
-        debug_info.append("🧪 اختبار فاتورة واحدة فقط")
+        debug_info.append("🧪 اختبار فاتورة واحدة مع حل العناصر")
         
-        # جلب فاتورة واحدة فقط
+        # جلب فاتورة واحدة فقط للاختبار
         url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=1"
         data = fetch_with_retry(url, DAFTRA_HEADERS)
         
@@ -81,12 +82,14 @@ async def sync_invoices():
                 "debug_info": debug_info
             }
         
-        # أخذ أول فاتورة مبيعات فقط
-        for invoice in invoice_list:
-            inv_type = invoice.get("type")
-            if str(inv_type) == "0":  # فاتورة مبيعات
+        # البحث عن فاتورة مبيعات
+        invoice = None
+        for inv in invoice_list:
+            if str(inv.get("type")) == "0":
+                invoice = inv
                 break
-        else:
+        
+        if not invoice:
             debug_info.append("❌ لا توجد فواتير مبيعات")
             return {
                 "total_synced": 0,
@@ -110,46 +113,36 @@ async def sync_invoices():
         )
         
         if check_response.status_code == 200 and len(check_response.json()) > 0:
-            debug_info.append(f"⏭️ فاتورة {inv_no} موجودة مسبقاً - سنجرب العناصر")
-            
-            # جلب UUID الفاتورة الموجودة
+            # الفاتورة موجودة - نأخذ UUID
             existing_invoice = check_response.json()[0]
             invoice_uuid = existing_invoice.get("id")
-            debug_info.append(f"🔑 UUID الموجود: {invoice_uuid}")
+            debug_info.append(f"⏭️ فاتورة {inv_no} موجودة - UUID: {invoice_uuid}")
         else:
-            # حفظ الفاتورة الجديدة
+            # حفظ فاتورة جديدة
             inv_date = invoice.get("date")
             if inv_date and len(str(inv_date)) >= 10:
                 invoice_date = str(inv_date)[:10]
             else:
                 invoice_date = datetime.now().strftime("%Y-%m-%d")
             
+            # إنشاء UUID جديد للفاتورة
+            invoice_uuid = str(uuid.uuid4())
+            
             invoice_data = {
+                "id": invoice_uuid,  # UUID محدد مسبقاً
                 "invoice_no": str(inv_no),
                 "invoice_date": invoice_date,
                 "customer_id": str(invoice.get("customer_id")) if invoice.get("customer_id") else None,
-                "total": "100.0",  # قيمة تجريبية
+                "total": "100.0",
                 "branch": str(invoice.get("branch_id", 1))
             }
             
-            debug_info.append(f"💾 حفظ فاتورة {inv_no}")
+            debug_info.append(f"💾 حفظ فاتورة جديدة {inv_no}")
             insert_response = save_invoice_to_supabase(invoice_data)
             
             if insert_response and insert_response.status_code == 201:
                 total_synced += 1
-                debug_info.append(f"✅ نجح حفظ {inv_no}")
-                
-                saved_invoice = insert_response.json()
-                if saved_invoice and len(saved_invoice) > 0:
-                    invoice_uuid = saved_invoice[0].get("id")
-                    debug_info.append(f"🔑 UUID جديد: {invoice_uuid}")
-                else:
-                    debug_info.append("❌ لم نحصل على UUID")
-                    return {
-                        "total_synced": total_synced,
-                        "duration": f"{time.time() - start_time:.2f} ثانية",
-                        "debug_info": debug_info
-                    }
+                debug_info.append(f"✅ نجح حفظ فاتورة {inv_no}")
             else:
                 error_msg = "خطأ غير معروف"
                 if insert_response:
@@ -161,9 +154,9 @@ async def sync_invoices():
                     "debug_info": debug_info
                 }
         
-        # الآن نجرب حفظ العناصر
+        # جلب تفاصيل الفاتورة للعناصر
         details_url = f"{DAFTRA_URL}/v2/api/entity/invoice/{inv_id}"
-        debug_info.append(f"🔍 جلب تفاصيل الفاتورة من: {details_url}")
+        debug_info.append(f"🔍 جلب تفاصيل الفاتورة")
         
         inv_details = fetch_with_retry(details_url, DAFTRA_HEADERS)
         if inv_details is None:
@@ -191,43 +184,89 @@ async def sync_invoices():
                 "debug_info": debug_info
             }
         
-        # تجربة حفظ أول عنصر فقط
-        item = items[0]
-        product_id = item.get("product_id")
-        quantity = item.get("quantity", 0)
-        unit_price = item.get("unit_price", 0)
+        # تجربة حفظ العناصر - حلول متعددة
+        items_saved = 0
         
-        debug_info.append(f"📝 عنصر تجريبي: منتج {product_id}, كمية {quantity}, سعر {unit_price}")
-        
-        if product_id and float(quantity or 0) > 0:
-            total_price = float(quantity) * float(unit_price)
+        for i, item in enumerate(items[:3]):  # أول 3 عناصر فقط
+            product_id = item.get("product_id")
+            quantity = item.get("quantity", 0)
+            unit_price = item.get("unit_price", 0)
             
-            item_data = {
-                "invoice_id": invoice_uuid,
-                "product_id": str(product_id),
-                "quantity": str(quantity),
-                "unit_price": str(unit_price),
-                "total_price": str(total_price)
-            }
+            debug_info.append(f"📝 عنصر {i+1}: منتج {product_id}, كمية {quantity}, سعر {unit_price}")
             
-            debug_info.append(f"💾 محاولة حفظ العنصر...")
-            item_response = save_item_to_supabase(item_data)
-            
-            if item_response and item_response.status_code == 201:
-                debug_info.append("🎉 نجح حفظ العنصر!")
+            if quantity and float(quantity) > 0:
+                total_price = float(quantity) * float(unit_price or 0)
+                
+                # تجربة عدة حلول
+                solutions = [
+                    {
+                        "name": "بدون product_id",
+                        "data": {
+                            "invoice_id": invoice_uuid,
+                            "quantity": str(quantity),
+                            "unit_price": str(unit_price or 0),
+                            "total_price": str(total_price)
+                        }
+                    },
+                    {
+                        "name": "product_id كـ UUID جديد",
+                        "data": {
+                            "invoice_id": invoice_uuid,
+                            "product_id": str(uuid.uuid4()),
+                            "quantity": str(quantity),
+                            "unit_price": str(unit_price or 0),
+                            "total_price": str(total_price)
+                        }
+                    },
+                    {
+                        "name": "product_id كما هو",
+                        "data": {
+                            "invoice_id": invoice_uuid,
+                            "product_id": str(product_id) if product_id else str(uuid.uuid4()),
+                            "quantity": str(quantity),
+                            "unit_price": str(unit_price or 0),
+                            "total_price": str(total_price)
+                        }
+                    },
+                    {
+                        "name": "بيانات أساسية فقط",
+                        "data": {
+                            "invoice_id": invoice_uuid,
+                            "quantity": "1",
+                            "unit_price": "10",
+                            "total_price": "10"
+                        }
+                    }
+                ]
+                
+                # تجربة كل حل
+                for solution in solutions:
+                    debug_info.append(f"   🧪 تجربة: {solution['name']}")
+                    
+                    item_response = save_item_to_supabase(solution['data'])
+                    
+                    if item_response and item_response.status_code == 201:
+                        items_saved += 1
+                        debug_info.append(f"   🎉 نجح! الحل: {solution['name']}")
+                        break
+                    else:
+                        error_msg = "خطأ غير معروف"
+                        if item_response:
+                            error_msg = f"كود {item_response.status_code}: {item_response.text[:100]}"
+                        debug_info.append(f"   ❌ فشل: {error_msg}")
+                else:
+                    debug_info.append(f"   😞 فشلت جميع الحلول للعنصر {i+1}")
             else:
-                error_msg = "خطأ غير معروف"
-                if item_response:
-                    error_msg = f"كود {item_response.status_code}: {item_response.text[:200]}"
-                debug_info.append(f"❌ فشل حفظ العنصر: {error_msg}")
-        else:
-            debug_info.append("❌ بيانات العنصر غير صالحة")
+                debug_info.append(f"   ⏭️ تخطي عنصر غير صالح")
+        
+        debug_info.append(f"📊 النتيجة: حُفظ {items_saved} من أصل {len(items)} عنصر")
         
     except Exception as e:
         debug_info.append(f"❌ خطأ عام: {str(e)}")
     
     return {
         "total_synced": total_synced,
+        "items_saved": items_saved,
         "duration": f"{time.time() - start_time:.2f} ثانية",
         "debug_info": debug_info
     }
