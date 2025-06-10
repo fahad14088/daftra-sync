@@ -1,3 +1,4 @@
+# main.py - الإصدار المبسط
 from datetime import date
 import time
 from fastapi import FastAPI
@@ -6,8 +7,17 @@ from fastui import FastUI, AnyComponent, prebuilt_html, components as c
 from pydantic import BaseModel, Field
 
 # استيراد الخدمات
-from products_service import sync_products
-from invoices_service import sync_invoices
+try:
+    from products_service import sync_products
+except:
+    async def sync_products():
+        return {"total_synced": 0, "error": "products_service not available"}
+
+try:
+    from invoices_service import sync_invoices
+except:
+    async def sync_invoices():
+        return {"total_synced": 0, "error": "invoices_service not available"}
 
 app = FastAPI()
 
@@ -23,25 +33,39 @@ users = [
 
 @app.get("/sync-products")
 async def products_endpoint():
-    """نقطة نهاية سحب المنتجات"""
-    result = await sync_products()
-    return {
-        "message": f"تم سحب {result['total_synced']} منتج جديد",
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "service": "products",
-        **result
-    }
+    try:
+        result = await sync_products()
+        return {
+            "message": f"تم سحب {result.get('total_synced', 0)} منتج جديد",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "service": "products",
+            **result
+        }
+    except Exception as e:
+        return {
+            "message": f"خطأ في مزامنة المنتجات: {str(e)}",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "service": "products",
+            "total_synced": 0
+        }
 
 @app.get("/sync-invoices")
 async def invoices_endpoint():
-    """نقطة نهاية سحب فواتير المبيعات"""
-    result = await sync_invoices()
-    return {
-        "message": f"تم سحب {result['total_synced']} فاتورة جديدة",
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "service": "invoices",
-        **result
-    }
+    try:
+        result = await sync_invoices()
+        return {
+            "message": f"تم سحب {result.get('total_synced', 0)} فاتورة جديدة",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "service": "invoices",
+            **result
+        }
+    except Exception as e:
+        return {
+            "message": f"خطأ في مزامنة الفواتير: {str(e)}",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "service": "invoices",
+            "total_synced": 0
+        }
 
 @app.get("/api/", response_model=FastUI, response_model_exclude_none=True)
 def users_table() -> list[AnyComponent]:
