@@ -26,7 +26,7 @@ SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
-    "Prefer": "return=minimal"
+    "Prefer": "return=minimal"  # إضافة هذا العنوان لتقليل استجابة Supabase
 }
 
 def fetch_with_retry(url: str, headers: Dict, max_retries: int = 3, timeout: int = 30) -> Optional[Dict]:
@@ -48,6 +48,7 @@ def fetch_with_retry(url: str, headers: Dict, max_retries: int = 3, timeout: int
 
 def test_connections() -> bool:
     """فحص الاتصال بـ Daftra و Supabase"""
+    # فحص الاتصال بدفترة
     daftra_test = fetch_with_retry(
         f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=1",
         DAFTRA_HEADERS,
@@ -57,6 +58,7 @@ def test_connections() -> bool:
     if daftra_test is None:
         return False
     
+    # فحص الاتصال بـ Supabase
     try:
         supabase_response = requests.get(
             f"{SUPABASE_URL}/rest/v1/invoices?limit=1",
@@ -74,18 +76,20 @@ async def sync_invoices():
     start_time = time.time()
     
     try:
-        expected_type = 0
-        limit = 50  # زيادة العدد
-        debug_info.append("🧾 بدء سحب جميع الفواتير")
+        expected_type = 0  # فواتير المبيعات فقط
+        limit = 50  # زيادة عدد الفواتير لكل صفحة لتسريع العملية
+        debug_info.append("🧾 بدء سحب جميع الفواتير من دفترة")
         
         page = 1
-        max_pages = 100  # جلب المزيد من الصفحات
+        max_pages = 100  # جلب المزيد من الصفحات لتغطية جميع الفواتير
         
         while page <= max_pages:
-            if time.time() - start_time > 1800:  # 30 دقيقة
-                debug_info.append("⏰ توقف بسبب انتهاء الوقت")
+            # فحص الوقت المستغرق (30 دقيقة كحد أقصى)
+            if time.time() - start_time > 1800:
+                debug_info.append("⏰ توقف بسبب انتهاء الوقت المحدد (30 دقيقة)")
                 break
                 
+            # جلب قائمة الفواتير من دفترة
             url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page={page}&limit={limit}"
             debug_info.append(f"🔄 جلب الصفحة {page}")
             
@@ -101,6 +105,7 @@ async def sync_invoices():
             
             debug_info.append(f"📋 وجدت {len(invoice_list)} فاتورة في الصفحة {page}")
             
+            # معالجة كل فاتورة في الصفحة
             for invoice in invoice_list:
                 try:
                     inv_id = invoice.get("id")
@@ -110,15 +115,16 @@ async def sync_invoices():
                     store_id = invoice.get("store_id")
                     branch_id = invoice.get("branch_id", 1)
                     
+                    # التحقق من نوع الفاتورة (فواتير المبيعات فقط)
                     try:
                         inv_type = int(inv_type)
                     except (ValueError, TypeError):
-                        continue
+                        continue  # تخطي الفواتير ذات النوع غير الصالح
                     
                     if inv_type != expected_type:
-                        continue
+                        continue  # تخطي الفواتير غير المطلوبة
                     
-                    # فحص وجود الفاتورة
+                    # فحص وجود الفاتورة في قاعدة البيانات لتجنب التكرار
                     check_response = requests.get(
                         f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{inv_id}",
                         headers=SUPABASE_HEADERS,
@@ -127,8 +133,9 @@ async def sync_invoices():
                     
                     if check_response.status_code == 200 and len(check_response.json()) > 0:
                         debug_info.append(f"⏭️ فاتورة {inv_no} موجودة مسبقاً")
-                        continue
+                        continue  # تخطي الفواتير الموجودة
                     
+                    # جلب تفاصيل الفاتورة من دفترة
                     url_details = f"{DAFTRA_URL}/v2/api/entity/invoice/{inv_id}"
                     inv_details = fetch_with_retry(url_details, DAFTRA_HEADERS)
                     
@@ -136,10 +143,10 @@ async def sync_invoices():
                         debug_info.append(f"❌ فشل جلب تفاصيل فاتورة {inv_no}")
                         continue
                     
-                    # تحضير بيانات الفاتورة مع التحقق من التاريخ
+                    # تحضير بيانات الفاتورة مع التحقق من صحة البيانات
                     if inv_date:
                         try:
-                            # تحويل التاريخ للصيغة الصحيحة
+                            # تحويل التاريخ للصيغة الصحيحة ISO 8601
                             if isinstance(inv_date, str):
                                 if 'T' not in inv_date:
                                     inv_date = f"{inv_date}T00:00:00"
@@ -149,9 +156,10 @@ async def sync_invoices():
                     else:
                         created_at = datetime.now().isoformat()
                     
+                    # تحضير بيانات الفاتورة بالأنواع الصحيحة
                     invoice_data = {
                         "id": int(inv_id),  # رقم صحيح
-                        "created_at": created_at,
+                        "created_at": created_at,  # تاريخ بصيغة ISO
                         "invoice_type": int(expected_type),  # رقم صحيح
                         "branch": int(branch_id) if branch_id else 1,  # رقم صحيح
                         "store": int(store_id) if store_id else None,  # رقم صحيح أو null
@@ -185,6 +193,7 @@ async def sync_invoices():
                             quantity = item.get("quantity", 0)
                             unit_price = item.get("unit_price", 0)
                             
+                            # التحقق من صحة بيانات العنصر
                             if product_id and float(quantity or 0) > 0:
                                 item_data = {
                                     "invoice_id": int(inv_id),  # رقم صحيح
@@ -193,6 +202,7 @@ async def sync_invoices():
                                     "unit_price": float(unit_price)  # رقم عشري
                                 }
                                 
+                                # حفظ عنصر الفاتورة
                                 item_response = requests.post(
                                     f"{SUPABASE_URL}/rest/v1/invoice_items",
                                     headers=SUPABASE_HEADERS,
@@ -205,26 +215,27 @@ async def sync_invoices():
                         
                         debug_info.append(f"💾 حفظ {items_added} عنصر للفاتورة {inv_no}")
                     else:
+                        # عرض تفاصيل الخطأ لمعرفة السبب
                         error_text = insert_response.text[:300] if insert_response.text else "No error text"
                         debug_info.append(f"❌ فشل حفظ فاتورة {inv_no}: {insert_response.status_code}")
-                        debug_info.append(f"📝 Error: {error_text}")
+                        debug_info.append(f"📝 Error details: {error_text}")
                     
                 except Exception as e:
                     debug_info.append(f"❌ خطأ في معالجة فاتورة {inv_no}: {str(e)}")
                     continue
             
             page += 1
-            time.sleep(2)  # راحة أطول بين الصفحات
+            time.sleep(2)  # راحة أطول بين الصفحات لتجنب إرهاق الخوادم
             
-            # تقرير كل 10 صفحات
+            # تقرير تقدم العملية كل 10 صفحات
             if page % 10 == 0:
-                debug_info.append(f"📊 تقرير: تم معالجة {page} صفحة، تم حفظ {total_synced} فاتورة")
+                debug_info.append(f"📊 تقرير تقدم: تم معالجة {page} صفحة، تم حفظ {total_synced} فاتورة")
     
     except Exception as e:
-        debug_info.append(f"❌ خطأ عام: {str(e)}")
+        debug_info.append(f"❌ خطأ عام في المزامنة: {str(e)}")
     
     return {
         "total_synced": total_synced,
         "duration": f"{time.time() - start_time:.2f} ثانية",
-        "debug_info": debug_info[-50:]  # آخر 50 رسالة فقط
+        "debug_info": debug_info[-50:]  # عرض آخر 50 رسالة فقط لتجنب الإفراط في البيانات
     }
