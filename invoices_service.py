@@ -36,7 +36,7 @@ async def sync_invoices():
         expected_type = 0  # فواتير المبيعات
         limit = 5  # قللنا العدد للاختبار
         
-        debug_info.append("🧾 بدء سحب الفواتير (اختبار بدون filter)")
+        debug_info.append("🧾 بدء سحب الفواتير (بدون فحص الوجود)")
         
         page = 1
         max_pages = 3  # نسحب 3 صفحات بس للاختبار
@@ -49,7 +49,7 @@ async def sync_invoices():
                 
             # URL بدون filter الفروع
             url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page={page}&limit={limit}"
-            debug_info.append(f"🔄 جلب الصفحة {page} من: {url}")
+            debug_info.append(f"🔄 جلب الصفحة {page}")
             
             data = fetch_with_retry(url, DAFTRA_HEADERS)
             if data is None:
@@ -70,9 +70,9 @@ async def sync_invoices():
                     inv_date = invoice.get("date")
                     inv_type = invoice.get("type")
                     store_id = invoice.get("store_id")
-                    branch_id = invoice.get("branch_id", 1)  # نجيب branch_id من البيانات
+                    branch_id = invoice.get("branch_id", 1)
                     
-                    debug_info.append(f"🔍 معالجة فاتورة {inv_id} - نوع: {inv_type}")
+                    debug_info.append(f"🔍 معالجة فاتورة {inv_no} - نوع: {inv_type}")
                     
                     # فحص نوع الفاتورة
                     try:
@@ -85,30 +85,15 @@ async def sync_invoices():
                         debug_info.append(f"⏭️ تخطي فاتورة نوع {inv_type}")
                         continue  # تخطي غير فواتير المبيعات
                     
-                    # تحقق من وجود الفاتورة في Supabase
-                    check_response = requests.get(
-                        f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{inv_id}",
-                        headers={
-                            "apikey": SUPABASE_KEY,
-                            "Authorization": f"Bearer {SUPABASE_KEY}",
-                            "Content-Type": "application/json",
-                            "Prefer": "count=exact"
-                        },
-                        timeout=10
-                    )
-                    
-                    count = check_response.headers.get("content-range", "").split("/")[-1]
-                    if int(count or 0) > 0:
-                        debug_info.append(f"⏭️ فاتورة {inv_id} موجودة مسبقاً")
-                        continue  # موجودة مسبقاً
+                    # *** حذفت فحص الوجود مؤقتاً ***
                     
                     # جلب تفاصيل الفاتورة
                     url_details = f"{DAFTRA_URL}/v2/api/entity/invoice/{inv_id}"
-                    debug_info.append(f"🔍 جلب تفاصيل فاتورة {inv_id}")
+                    debug_info.append(f"🔍 جلب تفاصيل فاتورة {inv_no}")
                     inv_details = fetch_with_retry(url_details, DAFTRA_HEADERS)
                     
                     if inv_details is None:
-                        debug_info.append(f"❌ فشل جلب تفاصيل فاتورة {inv_id}")
+                        debug_info.append(f"❌ فشل جلب تفاصيل فاتورة {inv_no}")
                         continue
                     
                     # تحضير بيانات الفاتورة
@@ -123,7 +108,7 @@ async def sync_invoices():
                         "invoice_no": str(inv_no)
                     }
                     
-                    debug_info.append(f"💾 حفظ فاتورة {inv_no} - مبلغ: {invoice_data['total']}")
+                    debug_info.append(f"💾 محاولة حفظ فاتورة {inv_no} - مبلغ: {invoice_data['total']}")
                     
                     # حفظ الفاتورة في Supabase
                     insert_response = requests.post(
@@ -136,6 +121,8 @@ async def sync_invoices():
                         json=invoice_data,
                         timeout=10
                     )
+                    
+                    debug_info.append(f"📊 Supabase response: {insert_response.status_code}")
                     
                     if insert_response.status_code == 201:
                         total_synced += 1
@@ -177,6 +164,8 @@ async def sync_invoices():
                         debug_info.append(f"💾 حفظ {items_added} عنصر للفاتورة {inv_no}")
                     else:
                         debug_info.append(f"❌ فشل حفظ فاتورة {inv_no}: {insert_response.status_code}")
+                        if insert_response.status_code != 201:
+                            debug_info.append(f"📝 Response text: {insert_response.text[:200]}")
                     
                 except Exception as e:
                     debug_info.append(f"❌ خطأ في معالجة فاتورة: {str(e)}")
