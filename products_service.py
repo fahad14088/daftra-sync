@@ -25,6 +25,91 @@ def fetch_with_retry(url, headers, max_retries=3, timeout=30):
                 continue
     return None
 
+async def sync_products():
+    """دالة سحب المنتجات من دفترة وحفظها في Supabase"""
+    total_synced = 0
+    debug_info = []
+    start_time = time.time()
+    
+    try:
+        limit = 10
+        debug_info.append("🛍️ بدء سحب المنتجات")
+        
+        page = 1
+        max_pages = 5
+        
+        while page <= max_pages:
+            if time.time() - start_time > 600:
+                debug_info.append("⏰ توقف بسبب انتهاء الوقت")
+                break
+                
+            url = f"{DAFTRA_URL}/v2/api/entity/product/list/1?page={page}&limit={limit}"
+            debug_info.append(f"🔄 جلب الصفحة {page}")
+            
+            data = fetch_with_retry(url, DAFTRA_HEADERS)
+            if data is None:
+                debug_info.append(f"❌ فشل جلب الصفحة {page}")
+                break
+            
+            product_list = data.get("data", [])
+            if not product_list:
+                debug_info.append(f"⏹️ الصفحة {page} فارغة")
+                break
+            
+            debug_info.append(f"📋 وجدت {len(product_list)} منتج في الصفحة {page}")
+            
+            for product in product_list:
+                try:
+                    product_id = product.get("id")
+                    product_name = product.get("name", "بدون اسم")
+                    
+                    # تحضير بيانات المنتج
+                    product_data = {
+                        "id": str(product_id),
+                        "name": str(product_name),
+                        "price": str(product.get("price", 0)),
+                        "category_id": str(product.get("category_id", "")),
+                        "description": str(product.get("description", "")),
+                        "barcode": str(product.get("barcode", "")),
+                        "unit": str(product.get("unit", ""))
+                    }
+                    
+                    debug_info.append(f"💾 محاولة حفظ منتج {product_name}")
+                    
+                    # حفظ المنتج في Supabase
+                    insert_response = requests.post(
+                        f"{SUPABASE_URL}/rest/v1/products",
+                        headers={
+                            "apikey": SUPABASE_KEY,
+                            "Authorization": f"Bearer {SUPABASE_KEY}",
+                            "Content-Type": "application/json"
+                        },
+                        json=product_data,
+                        timeout=10
+                    )
+                    
+                    if insert_response.status_code == 201:
+                        total_synced += 1
+                        debug_info.append(f"✅ نجح حفظ منتج {product_name}")
+                    else:
+                        debug_info.append(f"❌ فشل حفظ منتج {product_name}: {insert_response.status_code}")
+                    
+                except Exception as e:
+                    debug_info.append(f"❌ خطأ في معالجة منتج: {str(e)}")
+                    continue
+            
+            page += 1
+            time.sleep(1)
+    
+    except Exception as e:
+        debug_info.append(f"❌ خطأ عام: {str(e)}")
+    
+    return {
+        "total_synced": total_synced,
+        "duration": f"{time.time() - start_time:.2f} ثانية",
+        "debug_info": debug_info
+    }
+
 async def sync_invoices():
     """دالة سحب فواتير المبيعات من دفترة وحفظها في Supabase"""
     total_synced = 0
@@ -32,22 +117,19 @@ async def sync_invoices():
     start_time = time.time()
     
     try:
-        # إعدادات
-        expected_type = 0  # فواتير المبيعات
-        limit = 5  # قللنا العدد للاختبار
+        expected_type = 0
+        limit = 5
         
-        debug_info.append("🧾 بدء سحب الفواتير (بدون فحص الوجود)")
+        debug_info.append("🧾 بدء سحب الفواتير")
         
         page = 1
-        max_pages = 3  # نسحب 3 صفحات بس للاختبار
+        max_pages = 3
         
         while page <= max_pages:
-            # تحقق من الوقت (10 دقائق)
             if time.time() - start_time > 600:
                 debug_info.append("⏰ توقف بسبب انتهاء الوقت")
                 break
                 
-            # URL بدون filter الفروع
             url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page={page}&limit={limit}"
             debug_info.append(f"🔄 جلب الصفحة {page}")
             
@@ -74,7 +156,6 @@ async def sync_invoices():
                     
                     debug_info.append(f"🔍 معالجة فاتورة {inv_no} - نوع: {inv_type}")
                     
-                    # فحص نوع الفاتورة
                     try:
                         inv_type = int(inv_type)
                     except (ValueError, TypeError):
@@ -83,11 +164,8 @@ async def sync_invoices():
                     
                     if inv_type != expected_type:
                         debug_info.append(f"⏭️ تخطي فاتورة نوع {inv_type}")
-                        continue  # تخطي غير فواتير المبيعات
+                        continue
                     
-                    # *** حذفت فحص الوجود مؤقتاً ***
-                    
-                    # جلب تفاصيل الفاتورة
                     url_details = f"{DAFTRA_URL}/v2/api/entity/invoice/{inv_id}"
                     debug_info.append(f"🔍 جلب تفاصيل فاتورة {inv_no}")
                     inv_details = fetch_with_retry(url_details, DAFTRA_HEADERS)
@@ -96,7 +174,6 @@ async def sync_invoices():
                         debug_info.append(f"❌ فشل جلب تفاصيل فاتورة {inv_no}")
                         continue
                     
-                    # تحضير بيانات الفاتورة
                     invoice_data = {
                         "id": str(inv_id),
                         "created_at": str(inv_date or ""),
@@ -108,9 +185,8 @@ async def sync_invoices():
                         "invoice_no": str(inv_no)
                     }
                     
-                    debug_info.append(f"💾 محاولة حفظ فاتورة {inv_no} - مبلغ: {invoice_data['total']}")
+                    debug_info.append(f"💾 محاولة حفظ فاتورة {inv_no}")
                     
-                    # حفظ الفاتورة في Supabase
                     insert_response = requests.post(
                         f"{SUPABASE_URL}/rest/v1/invoices",
                         headers={
@@ -122,13 +198,10 @@ async def sync_invoices():
                         timeout=10
                     )
                     
-                    debug_info.append(f"📊 Supabase response: {insert_response.status_code}")
-                    
                     if insert_response.status_code == 201:
                         total_synced += 1
                         debug_info.append(f"✅ نجح حفظ فاتورة {inv_no}")
                         
-                        # حفظ عناصر الفاتورة
                         items = inv_details.get("invoice_item", [])
                         if not isinstance(items, list):
                             items = [items] if items else []
@@ -164,15 +237,13 @@ async def sync_invoices():
                         debug_info.append(f"💾 حفظ {items_added} عنصر للفاتورة {inv_no}")
                     else:
                         debug_info.append(f"❌ فشل حفظ فاتورة {inv_no}: {insert_response.status_code}")
-                        if insert_response.status_code != 201:
-                            debug_info.append(f"📝 Response text: {insert_response.text[:200]}")
                     
                 except Exception as e:
                     debug_info.append(f"❌ خطأ في معالجة فاتورة: {str(e)}")
                     continue
             
             page += 1
-            time.sleep(1)  # راحة بين الصفحات
+            time.sleep(1)
     
     except Exception as e:
         debug_info.append(f"❌ خطأ عام: {str(e)}")
@@ -180,5 +251,5 @@ async def sync_invoices():
     return {
         "total_synced": total_synced,
         "duration": f"{time.time() - start_time:.2f} ثانية",
-        "debug_info": debug_info  # كل الرسائل للتشخيص
+        "debug_info": debug_info
     }
