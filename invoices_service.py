@@ -1,4 +1,4 @@
-# invoices_service.py - الكود المصحح مع product_id الصحيح
+# invoices_service.py - الكود الكامل مع إرجاع تفاصيل الأخطاء
 import requests
 import time
 from datetime import datetime
@@ -49,9 +49,20 @@ def save_item_to_supabase(item_data):
             json=item_data,
             timeout=10
         )
-        return response
+        
+        # إرجاع تفاصيل الاستجابة
+        return {
+            "status_code": response.status_code,
+            "text": response.text,
+            "success": response.status_code == 201
+        }
+        
     except Exception as e:
-        return None
+        return {
+            "status_code": 0,
+            "text": str(e),
+            "success": False
+        }
 
 async def sync_invoices():
     total_synced = 0
@@ -60,7 +71,7 @@ async def sync_invoices():
     start_time = time.time()
     
     try:
-        debug_info.append("🧪 اختبار حفظ فاتورة مع العناصر الصحيحة")
+        debug_info.append("🧪 اختبار حفظ فاتورة مع العناصر مع تفاصيل الأخطاء")
         
         # جلب فاتورة واحدة للاختبار
         url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=1"
@@ -190,7 +201,7 @@ async def sync_invoices():
                 "debug_info": debug_info
             }
         
-        # حفظ العناصر بالبيانات الصحيحة
+        # حفظ العناصر مع إرجاع تفاصيل الأخطاء
         for i, item in enumerate(items):
             product_id = item.get("product_id")
             quantity = item.get("quantity", 0)
@@ -205,24 +216,25 @@ async def sync_invoices():
                 item_data = {
                     "id": str(uuid.uuid4()),
                     "invoice_id": invoice_uuid,
-                    "product_id": str(product_id) if product_id else None,  # الرقم الأصلي
+                    "product_id": str(product_id) if product_id else None,
                     "quantity": str(quantity),
                     "unit_price": str(unit_price or 0),
                     "total_price": str(total_price)
                 }
                 
                 debug_info.append(f"💾 حفظ عنصر: منتج {product_id}")
+                debug_info.append(f"📤 البيانات: {item_data}")
                 
                 item_response = save_item_to_supabase(item_data)
                 
-                if item_response and item_response.status_code == 201:
+                if item_response and item_response.get("success"):
                     items_saved += 1
                     debug_info.append(f"✅ نجح حفظ عنصر منتج {product_id}")
                 else:
-                    error_msg = "خطأ غير معروف"
-                    if item_response:
-                        error_msg = f"كود {item_response.status_code}: {item_response.text[:100]}"
-                    debug_info.append(f"❌ فشل حفظ عنصر منتج {product_id}: {error_msg}")
+                    status = item_response.get('status_code', 'unknown') if item_response else 'no response'
+                    error_text = item_response.get('text', 'no details')[:300] if item_response else 'no response'
+                    debug_info.append(f"❌ فشل حفظ عنصر منتج {product_id}: كود {status}")
+                    debug_info.append(f"📝 تفاصيل الخطأ: {error_text}")
             else:
                 debug_info.append(f"⏭️ تخطي عنصر غير صالح")
         
