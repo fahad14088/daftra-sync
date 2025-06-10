@@ -1,13 +1,14 @@
+# invoices_service.py
 import os
 import requests
 import time
 import uuid
 
-# قراءة الإعدادات من المتغيرات البيئية
-DAFTRA_URL     = os.getenv("DAFTRA_URL")
-DAFTRA_APIKEY  = os.getenv("DAFTRA_APIKEY")
-SUPABASE_URL   = os.getenv("SUPABASE_URL")
-SUPABASE_KEY   = os.getenv("SUPABASE_KEY")
+# إعدادات من البيئة
+DAFTRA_URL    = os.getenv("DAFTRA_URL")
+DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
+SUPABASE_URL  = os.getenv("SUPABASE_URL")
+SUPABASE_KEY  = os.getenv("SUPABASE_KEY")
 
 HEADERS_DAFTRA = {"apikey": DAFTRA_APIKEY}
 HEADERS_SB     = {
@@ -27,17 +28,15 @@ def fetch_with_retry(url, headers, retries=3, timeout=30):
         time.sleep((i+1)*5)
     return None
 
+# مزامنة الفواتير والبنود
 def sync_invoices():
-    # خريطة daftra_product_id -> product_code
+    # بناء خريطة daftra_product_id -> product_code
     resp_map = requests.get(
         f"{SUPABASE_URL}/rest/v1/products?select=daftra_product_id,product_code",
         headers=HEADERS_SB,
         timeout=10
     )
-    prod_map = {
-        rec["daftra_product_id"]: rec["product_code"]
-        for rec in (resp_map.json() if resp_map.status_code==200 else [])
-    }
+    prod_map = {rec["daftra_product_id"]: rec.get("product_code") for rec in (resp_map.json() if resp_map.status_code==200 else [])}
 
     total_inv = 0
     total_itm = 0
@@ -54,10 +53,10 @@ def sync_invoices():
         for inv in invs:
             inv_uuid = str(uuid.uuid4())
             inv_payload = {
-                "id": inv_uuid,
-                "invoice_no":   inv.get("no",""),
-                "invoice_date": inv.get("date",""),
-                "total":        str(inv.get("total",0))
+                "id":           inv_uuid,
+                "invoice_no":   inv.get("no", ""),
+                "invoice_date": inv.get("date", ""),
+                "total":        str(inv.get("total", 0))
             }
             requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SB, json=inv_payload, timeout=10)
             total_inv += 1
@@ -70,7 +69,8 @@ def sync_invoices():
                 pid = str(it.get("product_id"))
                 qty = float(it.get("quantity") or 0)
                 price = float(it.get("unit_price") or 0)
-                if qty<=0: continue
+                if qty <= 0:
+                    continue
 
                 item_payload = {
                     "id":           str(uuid.uuid4()),
@@ -79,7 +79,7 @@ def sync_invoices():
                     "product_code": prod_map.get(pid),
                     "quantity":     str(qty),
                     "unit_price":   str(price),
-                    "total_price":  str(qty*price)
+                    "total_price":  str(qty * price)
                 }
                 requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SB, json=item_payload, timeout=10)
                 total_itm += 1
