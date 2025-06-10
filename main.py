@@ -1,8 +1,9 @@
 # main.py
+import os
 import sys
 from products_service import sync_products
 from invoices_service import sync_invoices
-
+# …
 
 def main():
     print(f"🔄 مزامنة المنتجات... URL={os.getenv('DAFTRA_URL')}")
