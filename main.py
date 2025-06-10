@@ -5,8 +5,9 @@ from fastapi.responses import HTMLResponse
 from fastui import FastUI, AnyComponent, prebuilt_html, components as c
 from pydantic import BaseModel, Field
 
-# استيراد خدمة المنتجات
+# استيراد الخدمات
 from products_service import sync_products
+from invoices_service import sync_invoices
 
 app = FastAPI()
 
@@ -31,6 +32,17 @@ async def products_endpoint():
         **result
     }
 
+@app.get("/sync-invoices")
+async def invoices_endpoint():
+    """نقطة نهاية سحب فواتير المبيعات"""
+    result = await sync_invoices()
+    return {
+        "message": f"تم سحب {result['total_synced']} فاتورة جديدة",
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "service": "invoices",
+        **result
+    }
+
 @app.get("/api/", response_model=FastUI, response_model_exclude_none=True)
 def users_table() -> list[AnyComponent]:
     return [
@@ -49,7 +61,7 @@ async def home():
         "status": "running",
         "endpoints": [
             "/sync-products - سحب المنتجات",
-            "/sync-invoices - قريباً",
+            "/sync-invoices - سحب فواتير المبيعات",
             "/sync-customers - قريباً"
         ]
     }
