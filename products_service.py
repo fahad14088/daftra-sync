@@ -13,24 +13,29 @@ HEADERS_DAFTRA = {"apikey": DAFTRA_APIKEY}
 HEADERS_SB     = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Prefer": "resolution=merge-duplicates"
 }
 
-# جلب مع retry
-
 def fetch_with_retry(url, headers, retries=3, timeout=30):
+    """
+    جلب البيانات مع retry وتجاوز الأخطاء مؤقتاً
+    """
     for i in range(retries):
         try:
-            r = requests.get(url, headers=headers, timeout=timeout)
-            if r.status_code == 200:
-                return r.json()
+            resp = requests.get(url, headers=headers, timeout=timeout)
+            if resp.status_code == 200:
+                return resp.json()
         except Exception:
             pass
-        time.sleep((i+1)*5)
+        time.sleep((i + 1) * 5)
     return None
 
-# مزامنة المنتجات
 def sync_products():
+    """
+    يسحب دفعات من المنتجات من دفترة ويعمل upsert في Supabase
+    باستخدام العمود daftra_product_id كـ unique key
+    """
     total = 0
     page = 1
     limit = 50
@@ -43,7 +48,6 @@ def sync_products():
             break
 
         for prod in items:
-            # اختيار الحقل الصحيح للكود
             code = prod.get("code") or prod.get("product_code") or prod.get("supplier_code") or ""
             payload = {
                 "daftra_product_id": str(prod.get("id")),
@@ -55,8 +59,10 @@ def sync_products():
                 "minimum_price":      str(prod.get("minimum_price", 0)),
                 "supplier_code":      prod.get("supplier_code", "")
             }
+
+            # upsert باستخدام on_conflict ودون تكرار
             resp = requests.post(
-                f"{SUPABASE_URL}/rest/v1/products",
+                f"{SUPABASE_URL}/rest/v1/products?on_conflict=daftra_product_id",
                 headers=HEADERS_SB,
                 json=payload,
                 timeout=10
@@ -68,3 +74,8 @@ def sync_products():
         time.sleep(1)
 
     return {"synced": total}
+
+
+if __name__ == "__main__":
+    result = sync_products()
+    print(f"✅ تم مزامنة المنتجات: {result['synced']} سجل")
