@@ -25,8 +25,7 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=minimal"  # إضافة هذا العنوان لتقليل استجابة Supabase
+    "Content-Type": "application/json"
 }
 
 def fetch_with_retry(url: str, headers: Dict, max_retries: int = 3, timeout: int = 30) -> Optional[Dict]:
@@ -48,7 +47,6 @@ def fetch_with_retry(url: str, headers: Dict, max_retries: int = 3, timeout: int
 
 def test_connections() -> bool:
     """فحص الاتصال بـ Daftra و Supabase"""
-    # فحص الاتصال بدفترة
     daftra_test = fetch_with_retry(
         f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=1",
         DAFTRA_HEADERS,
@@ -58,7 +56,6 @@ def test_connections() -> bool:
     if daftra_test is None:
         return False
     
-    # فحص الاتصال بـ Supabase
     try:
         supabase_response = requests.get(
             f"{SUPABASE_URL}/rest/v1/invoices?limit=1",
@@ -76,20 +73,18 @@ async def sync_invoices():
     start_time = time.time()
     
     try:
-        expected_type = 0  # فواتير المبيعات فقط
-        limit = 50  # زيادة عدد الفواتير لكل صفحة لتسريع العملية
-        debug_info.append("🧾 بدء سحب جميع الفواتير من دفترة")
+        expected_type = 0
+        limit = 50
+        debug_info.append("🧾 بدء سحب جميع الفواتير")
         
         page = 1
-        max_pages = 100  # جلب المزيد من الصفحات لتغطية جميع الفواتير
+        max_pages = 100
         
         while page <= max_pages:
-            # فحص الوقت المستغرق (30 دقيقة كحد أقصى)
             if time.time() - start_time > 1800:
-                debug_info.append("⏰ توقف بسبب انتهاء الوقت المحدد (30 دقيقة)")
+                debug_info.append("⏰ توقف بسبب انتهاء الوقت")
                 break
                 
-            # جلب قائمة الفواتير من دفترة
             url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page={page}&limit={limit}"
             debug_info.append(f"🔄 جلب الصفحة {page}")
             
@@ -105,37 +100,33 @@ async def sync_invoices():
             
             debug_info.append(f"📋 وجدت {len(invoice_list)} فاتورة في الصفحة {page}")
             
-            # معالجة كل فاتورة في الصفحة
             for invoice in invoice_list:
                 try:
                     inv_id = invoice.get("id")
                     inv_no = invoice.get("no", "بدون رقم")
                     inv_date = invoice.get("date")
                     inv_type = invoice.get("type")
-                    store_id = invoice.get("store_id")
                     branch_id = invoice.get("branch_id", 1)
                     
-                    # التحقق من نوع الفاتورة (فواتير المبيعات فقط)
                     try:
                         inv_type = int(inv_type)
                     except (ValueError, TypeError):
-                        continue  # تخطي الفواتير ذات النوع غير الصالح
+                        continue
                     
                     if inv_type != expected_type:
-                        continue  # تخطي الفواتير غير المطلوبة
+                        continue
                     
-                    # فحص وجود الفاتورة في قاعدة البيانات لتجنب التكرار
+                    # فحص وجود الفاتورة
                     check_response = requests.get(
-                        f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{inv_id}",
+                        f"{SUPABASE_URL}/rest/v1/invoices?invoice_no=eq.{inv_no}",
                         headers=SUPABASE_HEADERS,
                         timeout=10
                     )
                     
                     if check_response.status_code == 200 and len(check_response.json()) > 0:
                         debug_info.append(f"⏭️ فاتورة {inv_no} موجودة مسبقاً")
-                        continue  # تخطي الفواتير الموجودة
+                        continue
                     
-                    # جلب تفاصيل الفاتورة من دفترة
                     url_details = f"{DAFTRA_URL}/v2/api/entity/invoice/{inv_id}"
                     inv_details = fetch_with_retry(url_details, DAFTRA_HEADERS)
                     
@@ -143,29 +134,25 @@ async def sync_invoices():
                         debug_info.append(f"❌ فشل جلب تفاصيل فاتورة {inv_no}")
                         continue
                     
-                    # تحضير بيانات الفاتورة مع التحقق من صحة البيانات
+                    # تحضير التاريخ
                     if inv_date:
                         try:
-                            # تحويل التاريخ للصيغة الصحيحة ISO 8601
-                            if isinstance(inv_date, str):
-                                if 'T' not in inv_date:
-                                    inv_date = f"{inv_date}T00:00:00"
-                            created_at = inv_date
+                            if isinstance(inv_date, str) and len(inv_date) >= 10:
+                                invoice_date = inv_date[:10]  # YYYY-MM-DD فقط
+                            else:
+                                invoice_date = datetime.now().strftime("%Y-%m-%d")
                         except:
-                            created_at = datetime.now().isoformat()
+                            invoice_date = datetime.now().strftime("%Y-%m-%d")
                     else:
-                        created_at = datetime.now().isoformat()
+                        invoice_date = datetime.now().strftime("%Y-%m-%d")
                     
-                    # تحضير بيانات الفاتورة بالأنواع الصحيحة
+                    # تحضير بيانات الفاتورة حسب بنية الجدول
                     invoice_data = {
-                        "id": int(inv_id),  # رقم صحيح
-                        "created_at": created_at,  # تاريخ بصيغة ISO
-                        "invoice_type": int(expected_type),  # رقم صحيح
-                        "branch": int(branch_id) if branch_id else 1,  # رقم صحيح
-                        "store": int(store_id) if store_id else None,  # رقم صحيح أو null
-                        "total": float(inv_details.get("summary_total", 0)),  # رقم عشري
-                        "customer_id": int(invoice.get("customer_id")) if invoice.get("customer_id") else None,  # رقم صحيح أو null
-                        "invoice_no": str(inv_no)  # نص
+                        "invoice_no": str(inv_no),
+                        "invoice_date": invoice_date,
+                        "customer_id": str(invoice.get("customer_id")) if invoice.get("customer_id") else None,
+                        "total": str(inv_details.get("summary_total", 0)),
+                        "branch": str(branch_id)
                     }
                     
                     debug_info.append(f"💾 محاولة حفظ فاتورة {inv_no}")
@@ -182,60 +169,64 @@ async def sync_invoices():
                         total_synced += 1
                         debug_info.append(f"✅ نجح حفظ فاتورة {inv_no}")
                         
-                        # حفظ عناصر الفاتورة
-                        items = inv_details.get("invoice_item", [])
-                        if not isinstance(items, list):
-                            items = [items] if items else []
-                        
-                        items_added = 0
-                        for item in items:
-                            product_id = item.get("product_id")
-                            quantity = item.get("quantity", 0)
-                            unit_price = item.get("unit_price", 0)
+                        # الحصول على UUID الفاتورة المحفوظة
+                        saved_invoice = insert_response.json()
+                        if saved_invoice and len(saved_invoice) > 0:
+                            invoice_uuid = saved_invoice[0].get("id")
                             
-                            # التحقق من صحة بيانات العنصر
-                            if product_id and float(quantity or 0) > 0:
-                                item_data = {
-                                    "invoice_id": int(inv_id),  # رقم صحيح
-                                    "product_id": int(product_id),  # رقم صحيح
-                                    "quantity": float(quantity),  # رقم عشري
-                                    "unit_price": float(unit_price)  # رقم عشري
-                                }
+                            # حفظ عناصر الفاتورة
+                            items = inv_details.get("invoice_item", [])
+                            if not isinstance(items, list):
+                                items = [items] if items else []
+                            
+                            items_added = 0
+                            for item in items:
+                                product_id = item.get("product_id")
+                                quantity = item.get("quantity", 0)
+                                unit_price = item.get("unit_price", 0)
                                 
-                                # حفظ عنصر الفاتورة
-                                item_response = requests.post(
-                                    f"{SUPABASE_URL}/rest/v1/invoice_items",
-                                    headers=SUPABASE_HEADERS,
-                                    json=item_data,
-                                    timeout=10
-                                )
-                                
-                                if item_response.status_code == 201:
-                                    items_added += 1
-                        
-                        debug_info.append(f"💾 حفظ {items_added} عنصر للفاتورة {inv_no}")
+                                if product_id and float(quantity or 0) > 0:
+                                    total_price = float(quantity) * float(unit_price)
+                                    
+                                    item_data = {
+                                        "invoice_id": invoice_uuid,
+                                        "product_id": str(product_id),
+                                        "quantity": str(quantity),
+                                        "unit_price": str(unit_price),
+                                        "total_price": str(total_price)
+                                    }
+                                    
+                                    item_response = requests.post(
+                                        f"{SUPABASE_URL}/rest/v1/invoice_items",
+                                        headers=SUPABASE_HEADERS,
+                                        json=item_data,
+                                        timeout=10
+                                    )
+                                    
+                                    if item_response.status_code == 201:
+                                        items_added += 1
+                            
+                            debug_info.append(f"💾 حفظ {items_added} عنصر للفاتورة {inv_no}")
                     else:
-                        # عرض تفاصيل الخطأ لمعرفة السبب
-                        error_text = insert_response.text[:300] if insert_response.text else "No error text"
+                        error_text = insert_response.text[:300] if insert_response.text else "No error"
                         debug_info.append(f"❌ فشل حفظ فاتورة {inv_no}: {insert_response.status_code}")
-                        debug_info.append(f"📝 Error details: {error_text}")
+                        debug_info.append(f"📝 Error: {error_text}")
                     
                 except Exception as e:
-                    debug_info.append(f"❌ خطأ في معالجة فاتورة {inv_no}: {str(e)}")
+                    debug_info.append(f"❌ خطأ في معالجة فاتورة: {str(e)}")
                     continue
             
             page += 1
-            time.sleep(2)  # راحة أطول بين الصفحات لتجنب إرهاق الخوادم
+            time.sleep(2)
             
-            # تقرير تقدم العملية كل 10 صفحات
             if page % 10 == 0:
-                debug_info.append(f"📊 تقرير تقدم: تم معالجة {page} صفحة، تم حفظ {total_synced} فاتورة")
+                debug_info.append(f"📊 تقرير: معالجة {page} صفحة، حفظ {total_synced} فاتورة")
     
     except Exception as e:
-        debug_info.append(f"❌ خطأ عام في المزامنة: {str(e)}")
+        debug_info.append(f"❌ خطأ عام: {str(e)}")
     
     return {
         "total_synced": total_synced,
         "duration": f"{time.time() - start_time:.2f} ثانية",
-        "debug_info": debug_info[-50:]  # عرض آخر 50 رسالة فقط لتجنب الإفراط في البيانات
+        "debug_info": debug_info[-50:]
     }
