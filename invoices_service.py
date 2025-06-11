@@ -1,4 +1,4 @@
-# invoices_service.py - الحل النهائي بدون أعمدة إضافية
+# invoices_service.py - الحل النهائي مع البنود
 
 import os
 import requests
@@ -24,8 +24,33 @@ def generate_uuid_from_number(number):
     uuid_str = f"{hash_digest[:8]}-{hash_digest[8:12]}-{hash_digest[12:16]}-{hash_digest[16:20]}-{hash_digest[20:32]}"
     return uuid_str
 
+def get_invoice_details_for_items(invoice_id):
+    """جلب تفاصيل الفاتورة للبنود فقط"""
+    headers = {"apikey": DAFTRA_APIKEY}
+    
+    # جرب الفروع المختلفة
+    for branch in [1, 2, 3, 4, 5]:
+        try:
+            url = f"{DAFTRA_URL}/v2/api/entity/invoice/show/{branch}/{invoice_id}"
+            response = requests.get(url, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                invoice_data = data.get("data", {}).get("Invoice", {})
+                
+                if invoice_data and invoice_data.get("invoice_item"):
+                    logger.info(f"✅ وجدت بنود للفاتورة {invoice_id} في الفرع {branch}")
+                    return invoice_data.get("invoice_item", [])
+            
+        except Exception as e:
+            logger.debug(f"خطأ في الفرع {branch}: {e}")
+            continue
+    
+    logger.debug(f"ℹ️ لم أجد بنود للفاتورة {invoice_id}")
+    return []
+
 def save_invoice_basic(invoice_summary):
-    """حفظ الفاتورة - الأعمدة الأساسية فقط"""
+    """حفظ الفاتورة"""
     try:
         headers = {
             "apikey": SUPABASE_KEY,
@@ -36,30 +61,24 @@ def save_invoice_basic(invoice_summary):
         invoice_id = str(invoice_summary["id"])
         proper_uuid = generate_uuid_from_number(invoice_id)
         
-        # البيانات الأساسية فقط - الأعمدة الموجودة في Supabase
         data = {
             "id": proper_uuid,
             "invoice_no": str(invoice_summary.get("no", "")),
             "total": float(invoice_summary.get("total", 0))
         }
         
-        # أضف التاريخ إذا كان موجود والعمود موجود
         if invoice_summary.get("date"):
             data["invoice_date"] = invoice_summary["date"]
         
-        # أضف اسم العميل إذا كان موجود والعمود موجود
         if invoice_summary.get("client_business_name"):
             data["client_business_name"] = str(invoice_summary["client_business_name"])[:255]
         
-        # أضف معرف العميل إذا كان موجود والعمود موجود
         if invoice_summary.get("customer_id"):
             data["customer_id"] = str(invoice_summary["customer_id"])
         
-        # إزالة القيم الفارغة
         data = {k: v for k, v in data.items() if v not in [None, "", "None", 0]}
         
-        logger.info(f"💾 حفظ الفاتورة {invoice_id} (UUID: {proper_uuid[:8]}...)")
-        logger.info(f"📊 البيانات: {data}")
+        logger.info(f"💾 حفظ الفاتورة {invoice_id}")
         
         response = requests.post(
             f"{SUPABASE_URL}/rest/v1/invoices",
@@ -68,37 +87,94 @@ def save_invoice_basic(invoice_summary):
             timeout=30
         )
         
-        logger.info(f"📤 رد الحفظ: {response.status_code}")
-        
-        if response.status_code in [200, 201]:
+        if response.status_code in [200, 201, 409]:
             logger.info(f"✅ تم حفظ الفاتورة {invoice_id}")
-            return True
-        elif response.status_code == 409:
-            logger.info(f"ℹ️ الفاتورة {invoice_id} موجودة مسبقاً")
-            return True
+            return proper_uuid
         else:
             logger.error(f"❌ فشل حفظ الفاتورة {invoice_id}: {response.text}")
-            return False
+            return None
             
     except Exception as e:
-        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_summary.get('id')}: {e}")
-        return False
+        logger.error(f"❌ خطأ في حفظ الفاتورة: {e}")
+        return None
+
+def save_invoice_items(invoice_uuid, invoice_id, items):
+    """حفظ بنود الفاتورة"""
+    if not items:
+        return 0
+    
+    if not isinstance(items, list):
+        items = [items]
+    
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    saved_count = 0
+    logger.info(f"📦 حفظ {len(items)} بند للفاتورة {invoice_id}")
+    
+    for i, item in enumerate(items, 1):
+        try:
+            quantity = float(item.get("quantity", 0))
+            unit_price = float(item.get("unit_price", 0))
+            
+            if quantity <= 0:
+                logger.debug(f"⏭️ تجاهل البند {i} - كمية صفر")
+                continue
+            
+            # إنشاء UUID للبند
+            item_id = str(item.get("id", ""))
+            if item_id:
+                item_uuid = generate_uuid_from_number(f"item-{item_id}-{invoice_id}")
+            else:
+                item_uuid = str(uuid.uuid4())
+            
+            item_data = {
+                "id": item_uuid,
+                "invoice_id": invoice_uuid,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "total_price": quantity * unit_price
+            }
+            
+            # أضف معرف المنتج إذا كان موجود
+            if item.get("product_id"):
+                item_data["product_id"] = str(item["product_id"])
+            
+            logger.debug(f"💾 حفظ البند {i}: كمية={quantity}, سعر={unit_price}")
+            
+            response = requests.post(
+                f"{SUPABASE_URL}/rest/v1/invoice_items",
+                headers=headers,
+                json=item_data,
+                timeout=30
+            )
+            
+            if response.status_code in [200, 201, 409]:
+                saved_count += 1
+                logger.debug(f"✅ تم حفظ البند {i}")
+            else:
+                logger.error(f"❌ فشل حفظ البند {i}: {response.text}")
+                
+        except Exception as e:
+            logger.error(f"❌ خطأ في البند {i}: {e}")
+    
+    logger.info(f"✅ تم حفظ {saved_count} بند للفاتورة {invoice_id}")
+    return saved_count
 
 def sync_invoices():
-    """الحل البسيط والمضمون"""
-    logger.info("🚀 بدء المزامنة النهائية...")
+    """الدالة الرئيسية مع البنود"""
+    logger.info("🚀 بدء المزامنة الكاملة (فواتير + بنود)...")
     
     result = {"invoices": 0, "items": 0, "errors": []}
     
     try:
-        # اختبار بسيط لـ Supabase
+        # اختبار Supabase
         logger.info("🧪 اختبار Supabase...")
         test_uuid = str(uuid.uuid4())
-        test_data = {
-            "id": test_uuid,
-            "invoice_no": "TEST-001",
-            "total": 1.0
-        }
+        test_data = {"id": test_uuid, "invoice_no": "TEST", "total": 1.0}
         
         headers = {
             "apikey": SUPABASE_KEY,
@@ -115,10 +191,8 @@ def sync_invoices():
         
         if test_response.status_code not in [200, 201]:
             logger.error(f"❌ فشل اختبار Supabase: {test_response.text}")
-            result["errors"].append("فشل اختبار Supabase")
             return result
         
-        # احذف البيانات التجريبية
         requests.delete(f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{test_uuid}", headers=headers)
         logger.info("✅ اختبار Supabase نجح")
         
@@ -126,12 +200,11 @@ def sync_invoices():
         logger.info("📥 جلب الفواتير...")
         daftra_headers = {"apikey": DAFTRA_APIKEY}
         
-        url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=5"
+        url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=10"
         response = requests.get(url, headers=daftra_headers, timeout=30)
         
         if response.status_code != 200:
             logger.error(f"❌ فشل جلب الفواتير: {response.text}")
-            result["errors"].append("فشل جلب الفواتير")
             return result
         
         data = response.json()
@@ -140,48 +213,44 @@ def sync_invoices():
         logger.info(f"📋 وجدت {len(invoices)} فاتورة")
         
         if not invoices:
-            result["errors"].append("لا توجد فواتير")
             return result
         
-        # حفظ كل فاتورة
-        success_count = 0
+        # معالجة كل فاتورة
         for i, invoice in enumerate(invoices, 1):
             try:
                 invoice_id = str(invoice["id"])
                 logger.info(f"🔄 {i}/{len(invoices)}: معالجة الفاتورة {invoice_id}")
                 
-                if save_invoice_basic(invoice):
-                    success_count += 1
-                    result["invoices"] += 1
-                    logger.info(f"✅ نجح حفظ الفاتورة {invoice_id}")
-                else:
-                    result["errors"].append(f"فشل حفظ الفاتورة {invoice_id}")
-                    logger.error(f"❌ فشل حفظ الفاتورة {invoice_id}")
+                # حفظ الفاتورة
+                invoice_uuid = save_invoice_basic(invoice)
                 
-                time.sleep(1)  # استراحة
+                if invoice_uuid:
+                    result["invoices"] += 1
+                    
+                    # جلب وحفظ البنود
+                    items = get_invoice_details_for_items(invoice_id)
+                    if items:
+                        saved_items = save_invoice_items(invoice_uuid, invoice_id, items)
+                        result["items"] += saved_items
+                    else:
+                        logger.info(f"ℹ️ لا توجد بنود للفاتورة {invoice_id}")
+                
+                time.sleep(1)
                 
             except Exception as e:
                 error_msg = f"خطأ في الفاتورة {invoice.get('id')}: {e}"
                 result["errors"].append(error_msg)
                 logger.error(f"❌ {error_msg}")
         
-        # النتائج النهائية
+        # النتائج
         logger.info("=" * 60)
         logger.info("🎯 النتائج النهائية:")
-        logger.info(f"✅ فواتير محفوظة بنجاح: {result['invoices']}")
-        logger.info(f"📦 بنود: {result['items']} (لم يتم جلب البنود)")
+        logger.info(f"✅ فواتير محفوظة: {result['invoices']}")
+        logger.info(f"📦 بنود محفوظة: {result['items']}")
         logger.info(f"❌ عدد الأخطاء: {len(result['errors'])}")
-        logger.info(f"📊 معدل النجاح: {success_count}/{len(invoices)}")
-        
-        if result['errors']:
-            logger.error("🚨 عينة من الأخطاء:")
-            for error in result['errors'][:3]:
-                logger.error(f"  - {error}")
         
         if result['invoices'] > 0:
             logger.info("🎉 تمت المزامنة بنجاح!")
-        else:
-            logger.warning("⚠️ لم يتم حفظ أي فواتير!")
         
         logger.info("=" * 60)
         
