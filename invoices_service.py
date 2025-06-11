@@ -1,17 +1,22 @@
-# invoices_service.py
+# invoices_service.py - النسخة المُحسنة والمضمونة
 
 import os
 import requests
 import time
 import uuid
 import logging
+import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
-# إعداد التسجيل
+# إعداد التسجيل المحسن
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('invoices_sync.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -21,196 +26,215 @@ DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Headers
+# Headers محسنة
 HEADERS_DAFTRA = {
     "apikey": DAFTRA_APIKEY,
     "Accept": "application/json",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "User-Agent": "InvoiceSync/1.0"
 }
 
 HEADERS_SUPABASE = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"  # تحسين الأداء
 }
 
-def test_daftra_connection():
-    """اختبار الاتصال بدفترة"""
-    try:
-        logger.info("🔍 اختبار الاتصال بدفترة...")
-        test_url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=1"
-        response = requests.get(test_url, headers=HEADERS_DAFTRA, timeout=15)
-        
-        logger.info(f"📱 دفترة - الحالة: {response.status_code}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"📊 عينة البيانات متاحة: {bool(data.get('data'))}")
-            return True
-        else:
-            logger.error(f"❌ فشل الاتصال بدفترة: {response.text}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"❌ خطأ في الاتصال بدفترة: {e}")
-        return False
-
-def test_supabase_connection():
-    """اختبار الاتصال بـ Supabase"""
-    try:
-        logger.info("🔍 اختبار الاتصال بـ Supabase...")
-        test_url = f"{SUPABASE_URL}/rest/v1/"
-        response = requests.get(test_url, headers=HEADERS_SUPABASE, timeout=15)
-        
-        logger.info(f"🗄️ Supabase - الحالة: {response.status_code}")
-        
-        if response.status_code in [200, 404, 406]:  # 406 طبيعي لهذا الرابط
-            return True
-        else:
-            logger.error(f"❌ فشل الاتصال بـ Supabase: {response.text}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"❌ خطأ في الاتصال بـ Supabase: {e}")
-        return False
-
-def fetch_all_invoices():
-    """جلب جميع الفواتير من دفترة"""
-    logger.info("📥 بدء جلب الفواتير من دفترة...")
-    all_invoices = []
-    page = 1
-    
-    while True:
+def safe_request(method, url, headers, data=None, timeout=30, retries=3):
+    """طلب HTTP آمن مع إعادة محاولة"""
+    for attempt in range(retries):
         try:
-            # جرب بدون فلتر الفرع
-            url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page={page}&limit=100"
-            logger.info(f"🔍 جلب الصفحة {page}...")
+            if method.upper() == 'GET':
+                response = requests.get(url, headers=headers, timeout=timeout)
+            elif method.upper() == 'POST':
+                response = requests.post(url, headers=headers, json=data, timeout=timeout)
+            else:
+                raise ValueError(f"طريقة HTTP غير مدعومة: {method}")
             
-            response = requests.get(url, headers=HEADERS_DAFTRA, timeout=30)
+            # تسجيل تفصيلي للأخطاء
+            if response.status_code >= 400:
+                logger.error(f"❌ خطأ HTTP {response.status_code}")
+                logger.error(f"URL: {url}")
+                logger.error(f"Response: {response.text[:500]}")
+                
+                if response.status_code == 409:  # تضارب - البيانات موجودة
+                    return {"success": True, "data": {}, "duplicate": True}
+                elif response.status_code >= 500:  # خطأ خادم - أعد المحاولة
+                    if attempt < retries - 1:
+                        logger.warning(f"⏳ إعادة المحاولة {attempt + 1}/{retries}")
+                        time.sleep((attempt + 1) * 2)
+                        continue
+                
+                return {"success": False, "error": response.text, "status": response.status_code}
             
-            if response.status_code != 200:
-                logger.error(f"❌ خطأ في الصفحة {page}: {response.status_code} - {response.text}")
-                break
-            
-            data = response.json()
-            invoices = data.get("data", [])
-            
-            logger.info(f"📊 الصفحة {page}: وجدت {len(invoices)} فاتورة")
-            
-            if not invoices or len(invoices) == 0:
-                logger.info("✅ انتهت جميع الفواتير")
-                break
-            
-            all_invoices.extend(invoices)
-            page += 1
-            
-            # استراحة بين الطلبات
-            time.sleep(1)
+            return {"success": True, "data": response.json() if response.text else {}}
             
         except requests.exceptions.Timeout:
-            logger.error(f"⏰ انتهت مهلة الطلب للصفحة {page}")
-            break
+            logger.warning(f"⏰ انتهت المهلة الزمنية - المحاولة {attempt + 1}/{retries}")
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"🔌 خطأ اتصال - المحاولة {attempt + 1}/{retries}")
+        except json.JSONDecodeError:
+            logger.error(f"❌ خطأ في تحليل JSON: {response.text[:200]}")
+            return {"success": False, "error": "Invalid JSON response"}
         except Exception as e:
-            logger.error(f"❌ خطأ في جلب الصفحة {page}: {e}")
-            break
+            logger.error(f"❌ خطأ غير متوقع: {str(e)}")
+        
+        if attempt < retries - 1:
+            time.sleep((attempt + 1) * 2)
     
-    logger.info(f"📋 إجمالي الفواتير المجلبة: {len(all_invoices)}")
+    return {"success": False, "error": "Max retries exceeded"}
+
+def test_connections():
+    """اختبار شامل للاتصالات"""
+    logger.info("🔍 اختبار الاتصالات...")
+    
+    # اختبار دفترة
+    result = safe_request('GET', f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page=1&limit=1", HEADERS_DAFTRA)
+    if not result["success"]:
+        logger.error(f"❌ فشل الاتصال بدفترة: {result.get('error', 'خطأ غير معروف')}")
+        return False
+    logger.info("✅ اتصال دفترة يعمل")
+    
+    # اختبار Supabase
+    result = safe_request('GET', f"{SUPABASE_URL}/rest/v1/", HEADERS_SUPABASE)
+    if not result["success"] and result.get("status") not in [404, 406]:
+        logger.error(f"❌ فشل الاتصال بـ Supabase: {result.get('error', 'خطأ غير معروف')}")
+        return False
+    logger.info("✅ اتصال Supabase يعمل")
+    
+    return True
+
+def fetch_all_invoices():
+    """جلب جميع الفواتير بطريقة محسنة"""
+    logger.info("📥 بدء جلب الفواتير...")
+    all_invoices = []
+    page = 1
+    consecutive_errors = 0
+    
+    while True:
+        url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?page={page}&limit=50"
+        logger.info(f"🔍 جلب الصفحة {page}")
+        
+        result = safe_request('GET', url, HEADERS_DAFTRA)
+        
+        if not result["success"]:
+            consecutive_errors += 1
+            logger.error(f"❌ فشل جلب الصفحة {page}: {result.get('error', 'خطأ غير معروف')}")
+            
+            if consecutive_errors >= 3:
+                logger.error("❌ فشل في 3 محاولات متتالية - توقف الجلب")
+                break
+            
+            time.sleep(5)
+            continue
+        
+        consecutive_errors = 0
+        data = result["data"]
+        invoices = data.get("data", [])
+        
+        logger.info(f"📊 الصفحة {page}: {len(invoices)} فاتورة")
+        
+        if not invoices:
+            logger.info("✅ انتهت جميع الفواتير")
+            break
+        
+        all_invoices.extend(invoices)
+        page += 1
+        time.sleep(1)  # استراحة بين الطلبات
+    
+    logger.info(f"📋 إجمالي الفواتير: {len(all_invoices)}")
     return all_invoices
 
 def fetch_invoice_details(invoice_id):
-    """جلب تفاصيل الفاتورة من عدة فروع"""
+    """جلب تفاصيل الفاتورة بطريقة محسنة"""
     logger.debug(f"🔍 جلب تفاصيل الفاتورة: {invoice_id}")
     
-    # جرب عدة فروع
     for branch_id in [1, 2, 3, 4, 5]:
-        try:
-            url = f"{DAFTRA_URL}/v2/api/entity/invoice/show/{branch_id}/{invoice_id}"
-            response = requests.get(url, headers=HEADERS_DAFTRA, timeout=30)
+        url = f"{DAFTRA_URL}/v2/api/entity/invoice/show/{branch_id}/{invoice_id}"
+        result = safe_request('GET', url, HEADERS_DAFTRA)
+        
+        if result["success"]:
+            data = result["data"]
+            invoice_data = data.get("data", {}).get("Invoice", {})
             
-            if response.status_code == 200:
-                data = response.json()
-                invoice_data = data.get("data", {}).get("Invoice", {})
-                
-                if invoice_data and invoice_data.get("id"):
-                    logger.debug(f"✅ وجدت تفاصيل الفاتورة {invoice_id} في الفرع {branch_id}")
-                    return invoice_data
-            
-        except Exception as e:
-            logger.debug(f"❌ فشل جلب الفاتورة {invoice_id} من الفرع {branch_id}: {e}")
-            continue
+            if invoice_data and invoice_data.get("id"):
+                logger.debug(f"✅ وجدت الفاتورة {invoice_id} في الفرع {branch_id}")
+                return invoice_data
     
-    logger.warning(f"⚠️ لم يتم العثور على تفاصيل الفاتورة: {invoice_id}")
+    logger.warning(f"⚠️ لم أجد تفاصيل الفاتورة: {invoice_id}")
     return None
 
-def check_invoice_exists(invoice_id):
-    """التحقق من وجود الفاتورة في Supabase"""
-    try:
-        url = f"{SUPABASE_URL}/rest/v1/invoices?select=id&id=eq.{invoice_id}"
-        response = requests.get(url, headers=HEADERS_SUPABASE, timeout=10)
+def clean_data_for_supabase(data, field_types=None):
+    """تنظيف البيانات لـ Supabase"""
+    if not field_types:
+        field_types = {}
+    
+    cleaned = {}
+    for key, value in data.items():
+        if value in [None, "", "None", "null", "undefined"]:
+            continue
         
-        if response.status_code == 200:
-            data = response.json()
-            return len(data) > 0
+        # تنظيف النصوص
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
         
-        return False
-    except:
-        return False
+        # تحويل الأرقام
+        if key in field_types.get('numbers', []):
+            try:
+                value = float(value) if '.' in str(value) else int(value)
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ قيمة رقمية غير صالحة {key}: {value}")
+                continue
+        
+        cleaned[key] = value
+    
+    return cleaned
 
-def save_invoice_to_supabase(invoice_data):
-    """حفظ الفاتورة في Supabase"""
+def save_invoice_safely(invoice_data):
+    """حفظ الفاتورة بطريقة آمنة"""
     try:
         invoice_id = str(invoice_data["id"])
         
-        # تحقق من وجود الفاتورة
-        if check_invoice_exists(invoice_id):
-            logger.debug(f"ℹ️ الفاتورة {invoice_id} موجودة مسبقاً")
-            return True
-        
-        # تحضير البيانات
-        payload = {
+        # تحضير البيانات المنظفة
+        payload = clean_data_for_supabase({
             "id": invoice_id,
             "invoice_no": str(invoice_data.get("no", "")),
             "invoice_date": invoice_data.get("date"),
             "customer_id": str(invoice_data.get("customer_id", "")) if invoice_data.get("customer_id") else None,
-            "client_business_name": str(invoice_data.get("client_business_name", "")) if invoice_data.get("client_business_name") else None,
-            "total": float(invoice_data.get("total", 0)),
+            "client_business_name": str(invoice_data.get("client_business_name", ""))[:255] if invoice_data.get("client_business_name") else None,
+            "total": invoice_data.get("total", 0),
             "created_at": datetime.now().isoformat()
-        }
+        }, {
+            'numbers': ['total']
+        })
         
-        # إزالة القيم الفارغة
-        payload = {k: v for k, v in payload.items() 
-                  if v not in [None, "", "None", "null"]}
+        if not payload:
+            logger.error(f"❌ بيانات فارغة للفاتورة {invoice_id}")
+            return False
         
-        logger.debug(f"💾 حفظ الفاتورة: {payload}")
+        logger.debug(f"💾 حفظ الفاتورة: {json.dumps(payload, ensure_ascii=False, indent=2)}")
         
-        response = requests.post(
-            f"{SUPABASE_URL}/rest/v1/invoices",
-            headers=HEADERS_SUPABASE,
-            json=payload,
-            timeout=30
-        )
+        result = safe_request('POST', f"{SUPABASE_URL}/rest/v1/invoices", HEADERS_SUPABASE, payload)
         
-        if response.status_code in [200, 201]:
+        if result["success"] or result.get("duplicate"):
             logger.info(f"✅ تم حفظ الفاتورة: {invoice_id}")
             return True
-        elif response.status_code == 409:
-            logger.info(f"ℹ️ الفاتورة {invoice_id} موجودة مسبقاً (409)")
-            return True
         else:
-            logger.error(f"❌ فشل حفظ الفاتورة {invoice_id}: {response.status_code} - {response.text}")
+            logger.error(f"❌ فشل حفظ الفاتورة {invoice_id}: {result.get('error', 'خطأ غير معروف')}")
             return False
             
     except Exception as e:
-        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_data.get('id', 'unknown')}: {e}")
+        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_data.get('id', 'unknown')}: {str(e)}")
         return False
 
-def save_invoice_items_to_supabase(invoice_id, items):
-    """حفظ بنود الفاتورة في Supabase"""
+def save_invoice_items_safely(invoice_id, items):
+    """حفظ بنود الفاتورة بطريقة آمنة"""
     if not items:
-        logger.debug(f"ℹ️ لا توجد بنود للفاتورة: {invoice_id}")
         return 0
     
-    # تأكد من أن items قائمة
     if not isinstance(items, list):
         items = [items] if items else []
     
@@ -218,17 +242,23 @@ def save_invoice_items_to_supabase(invoice_id, items):
     
     for item in items:
         try:
-            # تحضير بيانات البند
+            # تحضير البيانات
             item_id = str(item.get("id", str(uuid.uuid4())))
-            quantity = float(item.get("quantity", 0))
-            unit_price = float(item.get("unit_price", 0))
+            quantity = item.get("quantity", 0)
+            unit_price = item.get("unit_price", 0)
             
-            # تجاهل البنود بكمية صفر أو أقل
-            if quantity <= 0:
-                logger.debug(f"⏭️ تجاهل البند بكمية صفر: {item_id}")
+            # التحقق من الكمية
+            try:
+                quantity = float(quantity)
+                unit_price = float(unit_price)
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ قيم غير صالحة للبند {item_id}")
                 continue
             
-            payload = {
+            if quantity <= 0:
+                continue
+            
+            payload = clean_data_for_supabase({
                 "id": item_id,
                 "invoice_id": str(invoice_id),
                 "product_id": str(item.get("product_id", "")) if item.get("product_id") else None,
@@ -236,44 +266,35 @@ def save_invoice_items_to_supabase(invoice_id, items):
                 "unit_price": unit_price,
                 "total_price": quantity * unit_price,
                 "created_at": datetime.now().isoformat()
-            }
+            }, {
+                'numbers': ['quantity', 'unit_price', 'total_price']
+            })
             
-            # إزالة القيم الفارغة
-            payload = {k: v for k, v in payload.items() 
-                      if v not in [None, "", "None", "null"]}
+            if not payload:
+                continue
             
-            logger.debug(f"💾 حفظ البند: {payload}")
+            logger.debug(f"💾 حفظ البند: {json.dumps(payload, ensure_ascii=False)}")
             
-            response = requests.post(
-                f"{SUPABASE_URL}/rest/v1/invoice_items",
-                headers=HEADERS_SUPABASE,
-                json=payload,
-                timeout=30
-            )
+            result = safe_request('POST', f"{SUPABASE_URL}/rest/v1/invoice_items", HEADERS_SUPABASE, payload)
             
-            if response.status_code in [200, 201]:
+            if result["success"] or result.get("duplicate"):
                 saved_count += 1
                 logger.debug(f"✅ تم حفظ البند: {item_id}")
-            elif response.status_code == 409:
-                saved_count += 1
-                logger.debug(f"ℹ️ البند {item_id} موجود مسبقاً")
             else:
-                logger.error(f"❌ فشل حفظ البند {item_id}: {response.status_code} - {response.text}")
+                logger.error(f"❌ فشل حفظ البند {item_id}: {result.get('error', 'خطأ غير معروف')}")
                 
         except Exception as e:
-            logger.error(f"❌ خطأ في حفظ البند: {e}")
+            logger.error(f"❌ خطأ في معالجة البند: {str(e)}")
     
-    logger.info(f"✅ تم حفظ {saved_count} بند للفاتورة {invoice_id}")
+    if saved_count > 0:
+        logger.info(f"✅ تم حفظ {saved_count} بند للفاتورة {invoice_id}")
+    
     return saved_count
 
 def sync_invoices():
-    """
-    الدالة الرئيسية لمزامنة الفواتير - هذا اللي يستورده main.py
-    ترجع dictionary بنفس تنسيق main.py: {'invoices': X, 'items': Y}
-    """
-    logger.info("🚀 بدء عملية مزامنة الفواتير...")
+    """الدالة الرئيسية المحسنة"""
+    logger.info("🚀 بدء مزامنة الفواتير المحسنة...")
     
-    # إحصائيات النتائج
     result = {
         "invoices": 0,
         "items": 0,
@@ -282,88 +303,78 @@ def sync_invoices():
     
     try:
         # اختبار الاتصالات
-        logger.info("🔍 اختبار الاتصالات...")
-        if not test_daftra_connection():
-            result["errors"].append("فشل الاتصال بدفترة")
-            return result
-            
-        if not test_supabase_connection():
-            result["errors"].append("فشل الاتصال بـ Supabase")
+        if not test_connections():
+            result["errors"].append("فشل اختبار الاتصالات")
             return result
         
-        logger.info("✅ جميع الاتصالات تعمل بشكل صحيح!")
-        
-        # جلب جميع الفواتير
+        # جلب الفواتير
         all_invoices = fetch_all_invoices()
         
         if not all_invoices:
-            logger.warning("⚠️ لم يتم العثور على أي فواتير!")
             result["errors"].append("لا توجد فواتير")
             return result
         
-        logger.info(f"📋 سيتم معالجة {len(all_invoices)} فاتورة...")
+        logger.info(f"📋 معالجة {len(all_invoices)} فاتورة...")
         
-        # معالجة كل فاتورة
+        # معالجة الفواتير
+        processed = 0
         for i, invoice_summary in enumerate(all_invoices, 1):
             try:
                 invoice_id = str(invoice_summary.get("id"))
-                logger.info(f"🔄 معالجة الفاتورة {i}/{len(all_invoices)}: {invoice_id}")
                 
-                # جلب تفاصيل الفاتورة
+                if i % 10 == 0:  # تقرير كل 10 فواتير
+                    logger.info(f"🔄 معالجة {i}/{len(all_invoices)}: الفاتورة {invoice_id}")
+                
+                # جلب التفاصيل
                 invoice_details = fetch_invoice_details(invoice_id)
                 
                 if not invoice_details:
-                    logger.warning(f"⚠️ لم يتم العثور على تفاصيل الفاتورة: {invoice_id}")
-                    result["errors"].append(f"فاتورة {invoice_id}: لا توجد تفاصيل")
                     continue
                 
                 # حفظ الفاتورة
-                if save_invoice_to_supabase(invoice_details):
+                if save_invoice_safely(invoice_details):
                     result["invoices"] += 1
                     
-                    # حفظ بنود الفاتورة
+                    # حفظ البنود
                     items = invoice_details.get("invoice_item", [])
                     if items:
-                        saved_items_count = save_invoice_items_to_supabase(invoice_id, items)
-                        result["items"] += saved_items_count
-                    
-                else:
-                    result["errors"].append(f"فشل حفظ الفاتورة {invoice_id}")
+                        saved_items = save_invoice_items_safely(invoice_id, items)
+                        result["items"] += saved_items
                 
-                # استراحة قصيرة لتجنب الضغط على الخادم
-                time.sleep(0.3)
+                processed += 1
+                
+                # استراحة كل 50 فاتورة
+                if processed % 50 == 0:
+                    logger.info(f"💤 استراحة قصيرة بعد {processed} فاتورة...")
+                    time.sleep(2)
                 
             except Exception as e:
-                error_msg = f"خطأ في معالجة الفاتورة {invoice_summary.get('id', 'unknown')}: {str(e)}"
+                error_msg = f"خطأ في الفاتورة {invoice_summary.get('id', 'unknown')}: {str(e)}"
                 result["errors"].append(error_msg)
                 logger.error(f"❌ {error_msg}")
         
-        # طباعة النتائج النهائية
+        # النتائج النهائية
         logger.info("=" * 80)
-        logger.info("🎯 ملخص النتائج:")
-        logger.info(f"✅ الفواتير المحفوظة: {result['invoices']}")
-        logger.info(f"📦 البنود المحفوظة: {result['items']}")
-        logger.info(f"❌ عدد الأخطاء: {len(result['errors'])}")
+        logger.info("🎯 النتائج النهائية:")
+        logger.info(f"✅ فواتير محفوظة: {result['invoices']}")
+        logger.info(f"📦 بنود محفوظة: {result['items']}")
+        logger.info(f"❌ أخطاء: {len(result['errors'])}")
         
         if result['errors']:
-            logger.error("🚨 عينة من الأخطاء:")
-            for error in result['errors'][:3]:  # أول 3 أخطاء
+            logger.error("🚨 عينة أخطاء:")
+            for error in result['errors'][:3]:
                 logger.error(f"  - {error}")
-            if len(result['errors']) > 3:
-                logger.error(f"  ... و {len(result['errors']) - 3} أخطاء أخرى")
         
         logger.info("=" * 80)
         
         return result
         
     except Exception as e:
-        error_msg = f"خطأ عام في المزامنة: {str(e)}"
+        error_msg = f"خطأ عام: {str(e)}"
         result["errors"].append(error_msg)
         logger.error(f"💥 {error_msg}")
         return result
 
-# للاستخدام المباشر
 if __name__ == "__main__":
-    logger.info("🧪 تشغيل اختبار مباشر...")
     test_result = sync_invoices()
     print(f"🎯 النتيجة: {test_result}")
