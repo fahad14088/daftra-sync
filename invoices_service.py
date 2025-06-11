@@ -1,5 +1,3 @@
-# invoices_service.py - الحل الكامل والنهائي
-
 import os
 import requests
 import time
@@ -8,6 +6,7 @@ import logging
 from datetime import datetime
 import hashlib
 import json
+import traceback # تم إضافة هذا السطر
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -29,7 +28,8 @@ def safe_float(value, default=0.0):
         if value is None or value == "":
             return default
         return float(str(value).replace(",", ""))
-    except:
+    except Exception as e:
+        logger.error(f"❌ خطأ في تحويل القيمة '{value}' إلى رقم: {e}", exc_info=True) # تم التعديل
         return default
 
 def safe_string(value, max_length=None):
@@ -41,7 +41,8 @@ def safe_string(value, max_length=None):
         if max_length and len(result) > max_length:
             result = result[:max_length]
         return result
-    except:
+    except Exception as e:
+        logger.error(f"❌ خطأ في تحويل القيمة '{value}' إلى نص: {e}", exc_info=True) # تم التعديل
         return ""
 
 def get_all_invoices_complete():
@@ -77,7 +78,7 @@ def get_all_invoices_complete():
             time.sleep(1)
             
         except Exception as e:
-            logger.error(f"❌ خطأ في الصفحة {page}: {e}")
+            logger.error(f"❌ خطأ في جلب الصفحة {page}: {e}", exc_info=True) # تم التعديل
             break
     
     logger.info(f"📋 إجمالي الفواتير: {len(all_invoices)}")
@@ -108,6 +109,7 @@ def get_invoice_full_details(invoice_id):
                     return invoice_data
                     
         except Exception as e:
+            logger.error(f"❌ خطأ أثناء محاولة جلب تفاصيل الفاتورة {invoice_id} من الفرع {branch}: {e}", exc_info=True) # تم التعديل
             continue
     
     logger.warning(f"⚠️ لم أجد تفاصيل للفاتورة {invoice_id}")
@@ -180,7 +182,7 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
             return None
             
     except Exception as e:
-        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_summary.get('id')}: {e}")
+        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_summary.get('id')}: {e}", exc_info=True) # تم التعديل
         return None
 
 def save_invoice_items_complete(invoice_uuid, invoice_id, items):
@@ -243,7 +245,7 @@ def save_invoice_items_complete(invoice_uuid, invoice_id, items):
                 logger.error(f"❌ فشل حفظ البند {i}: {response.text}")
                 
         except Exception as e:
-            logger.error(f"❌ خطأ في البند {i}: {e}")
+            logger.error(f"❌ خطأ في البند {i}: {e}", exc_info=True) # تم التعديل
     
     logger.info(f"✅ تم حفظ {saved_count} بند")
     return saved_count
@@ -295,7 +297,7 @@ def sync_invoices():
             except Exception as e:
                 error_msg = f"خطأ في الفاتورة {invoice.get('id')}: {e}"
                 result["errors"].append(error_msg)
-                logger.error(f"❌ {error_msg}")
+                logger.error(f"❌ {error_msg}", exc_info=True) # تم التعديل
         
         # النتائج النهائية
         logger.info("=" * 80)
@@ -319,7 +321,7 @@ def sync_invoices():
     except Exception as e:
         error_msg = f"خطأ عام: {e}"
         result["errors"].append(error_msg)
-        logger.error(f"💥 {error_msg}")
+        logger.error(f"💥 {error_msg}", exc_info=True) # تم التعديل
         return result
 
 if __name__ == "__main__":
