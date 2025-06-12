@@ -224,7 +224,7 @@ def get_invoice_full_details(invoice_id):
     
     try:
         # استخدام نفس طريقة جلب تفاصيل الفاتورة كما في كودك المحلي
-        url = f"{DAFTRA_URL}/v2/api/entity/invoice/show/1/{invoice_id}" # تم تعديل هذا السطر
+        url = f"{DAFTRA_URL}/v2/api/entity/invoice/{invoice_id}" # تم تعديل هذا السطر
         logger.info(f"🔍 جلب تفاصيل الفاتورة {invoice_id}")
         
         data = fetch_with_retry(url, headers)
@@ -234,10 +234,10 @@ def get_invoice_full_details(invoice_id):
             return None
         
         # تسجيل القيم المالية المهمة
-        logger.info(f"💰 القيم المالية للفاتورة {invoice_id}:")
-        logger.info(f"   - المبلغ الإجمالي (summary_total): {data.get(\'summary_total\')}")
-        logger.info(f"   - المبلغ المدفوع (summary_paid): {data.get(\'summary_paid\')}")
-        logger.info(f"   - المبلغ غير المدفوع (summary_unpaid): {data.get(\'summary_unpaid\')}")
+        logger.info(f"""💰 القيم المالية للفاتورة {invoice_id}:
+   - المبلغ الإجمالي (summary_total): {data.get('summary_total')}
+   - المبلغ المدفوع (summary_paid): {data.get('summary_paid')}
+   - المبلغ غير المدفوع (summary_unpaid): {data.get('summary_unpaid')}""")
         
         # البحث عن بنود الفاتورة
         invoice_items = data.get("invoice_item", [])
@@ -282,18 +282,15 @@ def save_invoice_complete(invoice_data):
         }
         
         # تسجيل القيم المالية للتأكد من صحتها
-        logger.info(f"💰 القيم المالية التي سيتم حفظها للفاتورة {invoice_id}:")
-        logger.info(f"   - المبلغ الإجمالي (total): {payload[\'total
-\]}")
-        logger.info(f"   - المبلغ المدفوع (summary_paid): {payload[\'summary_paid
-\]}")
-        logger.info(f"   - المبلغ غير المدفوع (summary_unpaid): {payload[\'summary_unpaid
-\]}")
+        logger.info(f"""💰 القيم المالية التي سيتم حفظها للفاتورة {invoice_id}:
+   - المبلغ الإجمالي (total): {payload['total']}
+   - المبلغ المدفوع (summary_paid): {payload['summary_paid']}
+   - المبلغ غير المدفوع (summary_unpaid): {payload['summary_unpaid']}""")
         
         # تنظيف البيانات
         clean_payload = {k: v for k, v in payload.items() if v not in [None, "", "None"]}
         
-        logger.info(f"💾 حفظ الفاتورة {invoice_id} - المبلغ: {clean_payload.get(\'total\', 0)}")
+        logger.info(f"💾 حفظ الفاتورة {invoice_id} - المبلغ: {clean_payload.get('total', 0)}")
         
         response = requests.post(
             f"{SUPABASE_URL}/rest/v1/invoices",
@@ -310,7 +307,7 @@ def save_invoice_complete(invoice_data):
             return None
             
     except Exception as e:
-        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_data.get(\'id\')}: {e}", exc_info=True)
+        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_data.get('id')}: {e}", exc_info=True)
         return None
 
 def save_invoice_items_complete(invoice_uuid, invoice_id, items, client_business_name=""):
@@ -418,6 +415,10 @@ def sync_invoices():
                 # جلب التفاصيل الكاملة
                 details = get_invoice_full_details(invoice_id)
                 
+                if details is None:
+                    logger.warning(f"⚠️ لم يتم جلب تفاصيل الفاتورة {invoice_id}. تخطي.")
+                    continue
+
                 # حفظ الفاتورة (مع أو بدون تفاصيل)
                 invoice_uuid = save_invoice_complete(invoice, details)
                 
@@ -440,7 +441,7 @@ def sync_invoices():
                     time.sleep(2)
                 
             except Exception as e:
-                error_msg = f"خطأ في معالجة الفاتورة {invoice.get(\'id\')}: {e}"
+                error_msg = f"خطأ في معالجة الفاتورة {invoice.get('id')}: {e}"
                 result["errors"].append(error_msg)
                 logger.error(f"❌ {error_msg}", exc_info=True)
         
@@ -448,12 +449,9 @@ def sync_invoices():
         logger.info("=" * 80)
         logger.info("🎯 النتائج النهائية:")
         logger.info(f"📊 إجمالي الفواتير التي تم جلبها: {len(all_invoices)}")
-        logger.info(f"✅ فواتير محفوظة بنجاح: {result[\'invoices
-\]}")
-        logger.info(f"📦 بنود محفوظة بنجاح: {result[\'items
-\]}")
-        logger.info(f"❌ عدد الأخطاء التي حدثت: {len(result[\'errors
-\]}")
+        logger.info(f"✅ فواتير محفوظة بنجاح: {result['invoices']}")
+        logger.info(f"📦 بنود محفوظة بنجاح: {result['items']}")
+        logger.info(f"❌ عدد الأخطاء التي حدثت: {len(result['errors'])}")
         
         if len(all_invoices) > 0:
             success_rate = (result["invoices"] / len(all_invoices)) * 100
