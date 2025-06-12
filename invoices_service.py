@@ -4,11 +4,11 @@ import time
 import logging
 import hashlib
 
-# تفعيل اللوج
+# تفعيل اللوج للتتبع
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# متغيرات البيئة
+# إعداد المتغيرات من البيئة
 DAFTRA_URL    = os.getenv("DAFTRA_URL").rstrip('/')
 DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL  = os.getenv("SUPABASE_URL").rstrip('/')
@@ -18,65 +18,19 @@ def generate_uuid_from_number(number: str) -> str:
     h = hashlib.md5(number.encode()).hexdigest()
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
-def safe(v, to_type, default=None):
+def safe_float(v, default=0.0):
     try:
         if v is None or v == "": return default
-        return to_type(v)
+        return float(str(v).replace(",", ""))
     except:
         return default
 
-def get_all_invoices():
-    """يرجع قائمة ملخصات الفواتير من دفرة."""
-    headers = {"apikey": DAFTRA_APIKEY}
-    invoices = []
-    page = 1
-    while True:
-        resp = requests.get(
-            f"{DAFTRA_URL}/v2/api/entity/invoice/list/1",
-            headers=headers,
-            params={"page": page, "limit": 100},
-            timeout=30
-        )
-        if resp.status_code != 200:
-            logger.error("list failed page %s: %s", page, resp.text[:200])
-            break
-        data = resp.json().get("data") or []
-        if not data:
-            break
-        logger.info("page %s: got %s invoices", page, len(data))
-        invoices.extend(data)
-        page += 1
-        time.sleep(0.5)
-    logger.info("total invoices fetched: %s", len(invoices))
-    return invoices
-
-def get_invoice_with_items(invoice_id: str):
-    """
-    يجلب تفاصيل الفاتورة مع البنود دفعة واحدة
-    باستخدام with[]=InvoiceItem
-    """
-    headers = {"apikey": DAFTRA_APIKEY}
-    # جرب جميع الفروع
-    for branch in range(1, 10):
-        resp = requests.get(
-            f"{DAFTRA_URL}/v2/api/entity/invoice/show/{branch}/{invoice_id}",
-            headers=headers,
-            params={"with[]": "InvoiceItem"},
-            timeout=30
-        )
-        if resp.status_code != 200:
-            continue
-        body = resp.json().get("data") or {}
-        invoice = body.get("Invoice") or {}
-        items   = invoice.pop("InvoiceItem", [])
-        # إذا نجحنا في جلب رقم الفاتورة
-        if invoice.get("id"):
-            return invoice, items
-    logger.warning("no details for invoice %s", invoice_id)
-    return None, []
+def safe_string(v, max_length=None):
+    s = "" if v is None else str(v).strip()
+    return s if not max_length or len(s) <= max_length else s[:max_length]
 
 def upsert(table: str, payload: dict):
-    """وظيفة بسيطة لعمل upsert في Supabase."""
+    """حفظ أو تحديث سجل في Supabase باستخدام on_conflict=id"""
     url = f"{SUPABASE_URL}/rest/v1/{table}?on_conflict=id"
     headers = {
         "apikey":        SUPABASE_KEY,
@@ -90,49 +44,67 @@ def upsert(table: str, payload: dict):
     return True
 
 def sync_invoices():
-    invoices = get_all_invoices()
-    total_inv = total_items = 0
+    headers = {"apikey": DAFTRA_APIKEY}
+    page = 1
+    total_invoices = 0
+    total_items = 0
 
-    for inv_summary in invoices:
-        inv_id = str(inv_summary.get("id"))
-        invoice, items = get_invoice_with_items(inv_id)
-        if not invoice:
-            continue
-
-        # جهّز payload لحفظ الفاتورة
-        inv_uuid = generate_uuid_from_number(inv_id)
-        inv_pl = {
-            "id":                 inv_uuid,
-            "invoice_no":         invoice.get("no",""),
-            "total":              safe(invoice.get("total",0), float, 0.0),
-            "invoice_date":       invoice.get("date",""),
-            "client_business_name": invoice.get("client_business_name",""),
-            "customer_id":        invoice.get("client_id") or invoice.get("customer_id",""),
-            "summary_paid":       safe(invoice.get("paid_amount",0), float, 0.0),
-            "summary_unpaid":     max(0.0, safe(invoice.get("total",0), float, 0.0) - safe(invoice.get("paid_amount",0), float, 0.0)),
+    while True:
+        params = {
+            "page": page,
+            "limit": 100,
+            "with": "InvoiceItem"  # مهم: تضمين البنود مع كل فاتورة
         }
-        if upsert("invoices", inv_pl):
-            total_inv += 1
+        resp = requests.get(f"{DAFTRA_URL}/v2/api/entity/invoice/list/1",
+                            headers=headers, params=params, timeout=30)
+        if resp.status_code != 200:
+            logger.error("❌ Failed to fetch page %s: %s", page, resp.text[:200])
+            break
 
-            # حفظ البنود
-            for it in items:
-                it_uuid = generate_uuid_from_number(f"{it.get('id')}-{inv_id}")
-                it_pl = {
-                    "id":          it_uuid,
-                    "invoice_id":  inv_uuid,
-                    "product_id":  it.get("product_id",""),
-                    "product_code": it.get("product_code",""),
-                    "quantity":    safe(it.get("quantity",0), float, 0.0),
-                    "unit_price":  safe(it.get("unit_price", it.get("price",0)), float, 0.0),
-                    "total_price": safe(it.get("quantity",0), float, 0.0) * safe(it.get("unit_price", it.get("price",0)), float, 0.0)
-                }
-                if upsert("invoice_items", it_pl):
-                    total_items += 1
+        invoices = resp.json().get("data", [])
+        if not invoices:
+            logger.info("✅ No more invoices, exiting.")
+            break
 
-        # لتخفيف الضغط
-        time.sleep(0.2)
+        logger.info("📄 page %s: got %s invoices", page, len(invoices))
+        for inv in invoices:
+            inv_id = str(inv.get("id"))
+            inv_uuid = generate_uuid_from_number(inv_id)
 
-    logger.info("✅ done: invoices=%s, items=%s", total_inv, total_items)
+            # تحضير وحفظ الفاتورة
+            inv_payload = {
+                "id":                    inv_uuid,
+                "invoice_no":            safe_string(inv.get("no", "")),
+                "total":                 safe_float(inv.get("total", 0)),
+                "invoice_date":          safe_string(inv.get("date", "")),
+                "client_business_name":  safe_string(inv.get("client_business_name", ""), 255),
+                "customer_id":           safe_string(inv.get("client_id") or inv.get("customer_id", "")),
+                "summary_paid":          safe_float(inv.get("paid_amount", 0)),
+                "summary_unpaid":        max(0.0, safe_float(inv.get("total", 0)) - safe_float(inv.get("paid_amount", 0)))
+            }
+            if upsert("invoices", inv_payload):
+                total_invoices += 1
+
+                # جلب البنود المحشوة ضمن المفتاح InvoiceItem
+                items = inv.get("InvoiceItem") or []
+                for it in items:
+                    item_uuid = generate_uuid_from_number(f"{it.get('id')}-{inv_id}")
+                    it_payload = {
+                        "id":          item_uuid,
+                        "invoice_id":  inv_uuid,
+                        "product_id":  safe_string(it.get("product_id", "")),
+                        "product_code": safe_string(it.get("product_code", "")),
+                        "quantity":    safe_float(it.get("quantity", 0)),
+                        "unit_price":  safe_float(it.get("unit_price", it.get("price", 0))),
+                        "total_price": safe_float(it.get("quantity", 0)) * safe_float(it.get("unit_price", it.get("price", 0)))
+                    }
+                    if upsert("invoice_items", it_payload):
+                        total_items += 1
+
+        page += 1
+        time.sleep(0.2)  # لتخفيف الضغط
+
+    logger.info("✅ Done. Invoices saved: %s, Items saved: %s", total_invoices, total_items)
 
 if __name__ == "__main__":
     sync_invoices()
