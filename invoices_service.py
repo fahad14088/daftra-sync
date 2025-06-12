@@ -8,25 +8,31 @@ import hashlib
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ———————— متغيرات البيئة ————————
-BASE_URL     = os.getenv("BASE_URL").rstrip('/')      # مثال: "https://shadowpeace.daftra.com/"
-DAFTRA_HEADERS = {"apikey": os.getenv("DAFTRA_APIKEY")}
-SUPABASE_URL = os.getenv("SUPABASE_URL").rstrip('/')
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# ———————— متغيرات البيئة مع قيمة افتراضية ————————
+BASE_URL       = os.getenv("BASE_URL", "").rstrip('/')            # مثال: "https://shadowpeace.daftra.com"
+DAFTRA_APIKEY  = os.getenv("DAFTRA_APIKEY", "")
+DAFTRA_HEADERS = {"apikey": DAFTRA_APIKEY}
+SUPABASE_URL   = os.getenv("SUPABASE_URL", "").rstrip('/')
+SUPABASE_KEY   = os.getenv("SUPABASE_KEY", "")
 
 # ———————— دوال مساعدة ————————
 
 def generate_uuid(s: str) -> str:
+    """توليد UUID ثابت بناءً على نص."""
     h = hashlib.md5(s.encode()).hexdigest()
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 def safe_float(v, default=0.0):
+    """تحويل آمن إلى float."""
     try:
-        return default if v in (None, "") else float(str(v).replace(",", ""))
+        if v is None or v == "":
+            return default
+        return float(str(v).replace(",", ""))
     except:
         return default
 
 def fetch_with_retry(url, headers, params=None, retries=3, timeout=30):
+    """GET مع إعادة محاولة تلقائية."""
     for i in range(retries):
         try:
             r = requests.get(url, headers=headers, params=params, timeout=timeout)
@@ -39,12 +45,13 @@ def fetch_with_retry(url, headers, params=None, retries=3, timeout=30):
     return None
 
 def upsert(table: str, payload: dict) -> bool:
+    """INSERT أو UPDATE في Supabase REST مع on_conflict=id."""
     url = f"{SUPABASE_URL}/rest/v1/{table}?on_conflict=id"
     headers = {
-        "apikey":       SUPABASE_KEY,
+        "apikey":        SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer":       "resolution=merge-duplicates"
+        "Content-Type":  "application/json",
+        "Prefer":        "resolution=merge-duplicates"
     }
     r = requests.post(url, headers=headers, json=payload, timeout=30)
     if r.status_code in (200, 201, 409):
@@ -54,7 +61,7 @@ def upsert(table: str, payload: dict) -> bool:
 
 def get_all_branches():
     """الفروع الثابتة لديك."""
-    branches = [{"id":1},{"id":2}]
+    branches = [{"id": 1}, {"id": 2}]
     ids = [b["id"] for b in branches]
     logger.info(f"✅ الفروع: {ids}")
     return ids
@@ -119,7 +126,8 @@ def sync_invoices():
                             "product_id":  it.get("product_id",""),
                             "quantity":    safe_float(it.get("quantity")),
                             "unit_price":  safe_float(it.get("unit_price") or it.get("price")),
-                            "total_price": safe_float(it.get("quantity")) * safe_float(it.get("unit_price") or it.get("price"))
+                            "total_price": safe_float(it.get("quantity")) 
+                                           * safe_float(it.get("unit_price") or it.get("price"))
                         }
                         if upsert("invoice_items", payload_it):
                             total_items += 1
