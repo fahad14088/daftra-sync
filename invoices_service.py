@@ -77,6 +77,12 @@ def get_invoice_full_details(inv_id: str):
     return {}, []
 
 def sync_invoices():
+    """
+    المزامنة الرئيسية:
+    1) يجلب ملخص الفواتير مع البنود
+    2) يستدعي show للحصول على total و branch الحقيقي
+    3) يحفظ الفاتورة وبنودها في Supabase
+    """
     headers = {"apikey": DAFTRA_APIKEY}
     page = 1
     total_invoices = 0
@@ -109,7 +115,9 @@ def sync_invoices():
             if not inv:
                 continue
 
-            # سجل عدد البنود في اللوج للتأكد
+            # سجل تحذير لو فاتورة بدون بنود
+            if len(items) == 0:
+                logger.error(f"❌ Invoice {inv_id} has NO items but should have at least one!")
             logger.info(f"Invoice {inv_id} has {len(items)} items")
 
             # بناء payload لحفظ الفاتورة
