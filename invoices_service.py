@@ -58,6 +58,7 @@ def fetch_with_retry(url, headers, max_retries=3, timeout=30):
     """محاولة جلب البيانات مع إعادة المحاولة في حالة فشل الاتصال"""
     for retry in range(max_retries):
         try:
+            logger.info(f"🔄 محاولة جلب البيانات من: {url}")
             response = requests.get(url, headers=headers, timeout=timeout)
             
             if response.status_code == 200:
@@ -131,27 +132,47 @@ def get_all_invoices_complete():
         logger.info(f"🔄 جلب الفواتير من الفرع: {branch_id}...")
         page = 1
         limit = 100
+        has_more_pages = True
         
-        while True:
+        while has_more_pages:
             try:
-                # استخدام نفس طريقة جلب الفواتير كما في كودك المحلي
-                url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?filter[branch_id]={branch_id}&page={page}&limit={limit}"
-                logger.info(f"📄 الفرع {branch_id}, الصفحة {page}")
+                # تعديل طريقة استعلام API - استخدام معلمات أكثر دقة
+                url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1"
+                params = {
+                    "filter[branch_id]": branch_id,
+                    "page": page,
+                    "limit": limit,
+                    "sort[id]": "desc"  # ترتيب تنازلي حسب المعرف
+                }
                 
-                data = fetch_with_retry(url, headers)
+                # بناء URL مع المعلمات
+                query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+                full_url = f"{url}?{query_string}"
+                
+                logger.info(f"📄 الفرع {branch_id}, الصفحة {page}, الحد {limit}")
+                
+                data = fetch_with_retry(full_url, headers)
                 
                 # إذا فشلت جميع المحاولات
                 if data is None:
                     logger.error(f"❌ فشل استرجاع البيانات من الصفحة {page} بعد عدة محاولات")
                     break
                 
+                # تسجيل البيانات المستلمة للتشخيص
+                logger.info(f"📊 بيانات الاستجابة: {json.dumps(data.keys())}")
+                
                 invoices = data.get("data", [])
                 
                 if not invoices:
-                    logger.info(f"✅ انتهت الفواتير للفرع {branch_id}")
+                    logger.info(f"✅ لا توجد فواتير في الصفحة {page} للفرع {branch_id}. انتهاء الجلب لهذا الفرع.")
+                    has_more_pages = False
                     break
                 
-                logger.info(f"📊 وجدت {len(invoices)} فاتورة في الصفحة {page}")
+                logger.info(f"📊 وجدت {len(invoices)} فاتورة في الصفحة {page} للفرع {branch_id}")
+                
+                # تسجيل معرفات الفواتير للتشخيص
+                invoice_ids = [str(inv.get("id")) for inv in invoices]
+                logger.info(f"🔢 معرفات الفواتير في الصفحة {page}: {invoice_ids}")
                 
                 # التحقق من الفواتير الجديدة وتجنب التكرار
                 new_invoices_count = 0
@@ -176,18 +197,23 @@ def get_all_invoices_complete():
                 
                 logger.info(f"✅ تمت إضافة {new_invoices_count} فاتورة جديدة من الصفحة {page}")
                 
-                # إذا كان عدد الفواتير في الصفحة أقل من الحد، فقد وصلنا للنهاية
-                if len(invoices) < limit:
-                    logger.info(f"🏁 وصلنا للصفحة الأخيرة ({page}). انتهاء الجلب لهذا الفرع.")
-                    break
+                # التحقق مما إذا كانت هناك صفحات أخرى
+                total_pages = data.get("last_page", 1)
+                current_page = data.get("current_page", 1)
                 
-                # الانتقال للصفحة التالية حتى لو لم نجد فواتير جديدة في هذه الصفحة
-                page += 1
-                time.sleep(1) # تأخير لتجنب تجاوز حدود معدل الطلبات
+                logger.info(f"📄 الصفحة الحالية: {current_page}, إجمالي الصفحات: {total_pages}")
+                
+                if current_page >= total_pages or len(invoices) < limit:
+                    logger.info(f"🏁 وصلنا للصفحة الأخيرة ({page}/{total_pages}). انتهاء الجلب لهذا الفرع.")
+                    has_more_pages = False
+                else:
+                    # الانتقال للصفحة التالية
+                    page += 1
+                    time.sleep(1)  # تأخير لتجنب تجاوز حدود معدل الطلبات
                 
             except Exception as e:
                 logger.error(f"❌ خطأ في جلب الفواتير من الفرع {branch_id}, الصفحة {page}: {e}", exc_info=True)
-                break
+                has_more_pages = False
     
     logger.info(f"📋 إجمالي الفواتير الجديدة التي تم جلبها من جميع الفروع: {len(all_invoices)}")
     return all_invoices
@@ -381,7 +407,7 @@ def sync_invoices():
                 invoice_id = str(invoice["id"])
                 
                 # تقرير التقدم
-                if i % 10 == 0:
+                if i % 10 == 0 or i == 1:
                     logger.info(f"🔄 معالجة {i}/{len(all_invoices)}: الفاتورة {invoice_id}")
                 
                 # جلب التفاصيل الكاملة
