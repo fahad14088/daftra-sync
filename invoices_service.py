@@ -159,7 +159,7 @@ def get_all_invoices_complete():
                     break
                 
                 # تسجيل البيانات المستلمة للتشخيص
-                logger.info(f"📊 بيانات الاستجابة: {json.dumps(data.keys())}")
+                logger.info(f"📊 بيانات الاستجابة: {json.dumps(list(data.keys()))}") # تم التعديل هنا
                 
                 invoices = data.get("data", [])
                 
@@ -470,3 +470,5 @@ def sync_invoices():
 
 if __name__ == "__main__":
     sync_invoices()
+
+
