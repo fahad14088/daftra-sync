@@ -89,12 +89,40 @@ def fetch_with_retry(url, headers, max_retries=3, timeout=30):
     # إذا وصلنا إلى هنا، فقد فشلت جميع المحاولات
     return None
 
+def check_invoice_exists(invoice_id):
+    """التحقق مما إذا كانت الفاتورة موجودة بالفعل في قاعدة البيانات"""
+    try:
+        invoice_uuid = generate_uuid_from_number(invoice_id)
+        
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}"
+        }
+        
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{invoice_uuid}&select=id",
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return len(data) > 0
+        else:
+            logger.warning(f"⚠️ فشل التحقق من وجود الفاتورة {invoice_id}: {response.text}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ خطأ في التحقق من وجود الفاتورة {invoice_id}: {e}", exc_info=True)
+        return False
+
 def get_all_invoices_complete():
     """جلب جميع الفواتير من جميع الصفحات ولجميع الفروع المعروفة"""
     logger.info("📥 جلب جميع الفواتير...")
     
     headers = {"apikey": DAFTRA_APIKEY}
     all_invoices = []
+    processed_ids = set()  # مجموعة لتتبع معرفات الفواتير التي تمت معالجتها
     
     # قائمة بمعرفات الفروع التي تريد جلب الفواتير منها
     branches = get_all_branches()
@@ -103,6 +131,7 @@ def get_all_invoices_complete():
         logger.info(f"🔄 جلب الفواتير من الفرع: {branch_id}...")
         page = 1
         limit = 100
+        new_invoices_found = False
         
         while True:
             try:
@@ -112,6 +141,7 @@ def get_all_invoices_complete():
                 
                 data = fetch_with_retry(url, headers)
                 
+                # إذا فشلت جميع المحاولات
                 if data is None:
                     logger.error(f"❌ فشل استرجاع البيانات من الصفحة {page} بعد عدة محاولات")
                     break
@@ -122,8 +152,35 @@ def get_all_invoices_complete():
                     logger.info(f"✅ انتهت الفواتير للفرع {branch_id}")
                     break
                 
-                logger.info(f"📊 وجدت {len(invoices)} فاتورة في الفرع {branch_id}")
-                all_invoices.extend(invoices)
+                logger.info(f"📊 وجدت {len(invoices)} فاتورة في الصفحة {page}")
+                
+                # التحقق من الفواتير الجديدة وتجنب التكرار
+                new_invoices_count = 0
+                for invoice in invoices:
+                    invoice_id = str(invoice.get("id"))
+                    
+                    # تخطي الفواتير المكررة
+                    if invoice_id in processed_ids:
+                        logger.info(f"⏭️ الفاتورة {invoice_id} تمت معالجتها بالفعل. تخطي.")
+                        continue
+                    
+                    # التحقق مما إذا كانت الفاتورة موجودة بالفعل في قاعدة البيانات
+                    if check_invoice_exists(invoice_id):
+                        logger.info(f"⏭️ الفاتورة {invoice_id} موجودة بالفعل في قاعدة البيانات. تخطي.")
+                        processed_ids.add(invoice_id)
+                        continue
+                    
+                    # إضافة الفاتورة الجديدة
+                    all_invoices.append(invoice)
+                    processed_ids.add(invoice_id)
+                    new_invoices_count += 1
+                
+                logger.info(f"✅ تمت إضافة {new_invoices_count} فاتورة جديدة من الصفحة {page}")
+                
+                # إذا لم نجد أي فواتير جديدة في هذه الصفحة، نتوقف
+                if new_invoices_count == 0:
+                    logger.info(f"🏁 لم يتم العثور على فواتير جديدة في الصفحة {page}. التوقف عن جلب المزيد من الصفحات.")
+                    break
                 
                 # إذا كان عدد الفواتير في الصفحة أقل من الحد، فقد وصلنا للنهاية
                 if len(invoices) < limit:
@@ -137,7 +194,7 @@ def get_all_invoices_complete():
                 logger.error(f"❌ خطأ في جلب الفواتير من الفرع {branch_id}, الصفحة {page}: {e}", exc_info=True)
                 break
     
-    logger.info(f"📋 إجمالي الفواتير التي تم جلبها من جميع الفروع: {len(all_invoices)}")
+    logger.info(f"📋 إجمالي الفواتير الجديدة التي تم جلبها من جميع الفروع: {len(all_invoices)}")
     return all_invoices
 
 def get_invoice_full_details(invoice_id):
@@ -318,10 +375,10 @@ def sync_invoices():
         all_invoices = get_all_invoices_complete()
         
         if not all_invoices:
-            logger.error("❌ لا توجد فواتير لجلبها!")
+            logger.info("✅ لا توجد فواتير جديدة لجلبها! تم الانتهاء من المزامنة.")
             return result
         
-        logger.info(f"📋 معالجة {len(all_invoices)} فاتورة...")
+        logger.info(f"📋 معالجة {len(all_invoices)} فاتورة جديدة...")
         
         # معالجة كل فاتورة
         for i, invoice in enumerate(all_invoices, 1):
