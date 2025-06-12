@@ -39,15 +39,13 @@ def safe_string(v, max_length=None):
         return ""
 
 def upsert(table: str, payload: dict) -> bool:
-    """
-    إدخال أو تعديل سجل في Supabase باستخدام on_conflict=id و merge-duplicates
-    """
+    """إدخال أو تعديل سجل في Supabase باستخدام on_conflict=id و merge-duplicates."""
     url = f"{SUPABASE_URL}/rest/v1/{table}?on_conflict=id"
     headers = {
-        "apikey":        SUPABASE_KEY,
+        "apikey":       SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type":  "application/json",
-        "Prefer":        "resolution=merge-duplicates"
+        "Content-Type": "application/json",
+        "Prefer":       "resolution=merge-duplicates"
     }
     logger.debug(f"▶️ UPSERT {table}: {payload}")
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
@@ -58,10 +56,7 @@ def upsert(table: str, payload: dict) -> bool:
     return True
 
 def get_invoice_full_details(inv_id: str):
-    """
-    جلب تفاصيل الفاتورة الكاملة ومعها البنود دفعة واحدة.
-    يُرجع tuple: (invoice_data: dict, items: list)
-    """
+    """جلب تفاصيل الفاتورة الكاملة ومعها البنود دفعة واحدة."""
     headers = {"apikey": DAFTRA_APIKEY}
     for branch in range(1, 10):
         resp = requests.get(
@@ -82,12 +77,6 @@ def get_invoice_full_details(inv_id: str):
     return {}, []
 
 def sync_invoices():
-    """
-    المزامنة الرئيسية: 
-    1) يجلب ملخص الفواتير مع البنود
-    2) يستدعي show للحصول على total و branch الحقيقي
-    3) يحفظ الفاتورة وبنودها في Supabase
-    """
     headers = {"apikey": DAFTRA_APIKEY}
     page = 1
     total_invoices = 0
@@ -119,6 +108,9 @@ def sync_invoices():
             inv, items = get_invoice_full_details(inv_id)
             if not inv:
                 continue
+
+            # سجل عدد البنود في اللوج للتأكد
+            logger.info(f"Invoice {inv_id} has {len(items)} items")
 
             # بناء payload لحفظ الفاتورة
             inv_payload = {
