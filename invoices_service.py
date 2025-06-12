@@ -8,7 +8,7 @@ import hashlib
 import json
 import traceback
 
-# تم تصحيح هذا السطر باستخدام raw string
+# إعداد التسجيل
 logging.basicConfig(level=logging.INFO, format=r'%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 def generate_uuid_from_number(number):
+    """توليد معرف UUID من رقم"""
     hash_input = f"invoice-{number}".encode("utf-8")
     hash_digest = hashlib.md5(hash_input).hexdigest()
     return f"{hash_digest[:8]}-{hash_digest[8:12]}-{hash_digest[12:16]}-{hash_digest[16:20]}-{hash_digest[20:32]}"
@@ -46,134 +47,139 @@ def safe_string(value, max_length=None):
         logger.error(f"❌ خطأ في تحويل القيمة '{value}' إلى نص: {e}", exc_info=True)
         return ""
 
+def get_all_branches():
+    """الحصول على قائمة الفروع"""
+    # استخدام قائمة ثابتة للفروع كما في كودك المحلي
+    branches = [1, 2, 3]
+    logger.info(f"✅ استخدام الفروع المحددة: {branches}")
+    return branches
+
+def fetch_with_retry(url, headers, max_retries=3, timeout=30):
+    """محاولة جلب البيانات مع إعادة المحاولة في حالة فشل الاتصال"""
+    for retry in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"⚠️ كود استجابة غير متوقع: {response.status_code}")
+                if retry < max_retries - 1:
+                    wait_time = (retry + 1) * 5
+                    logger.info(f"⏱️ انتظار {wait_time} ثوانٍ قبل إعادة المحاولة...")
+                    time.sleep(wait_time)
+                    continue
+        
+        except requests.exceptions.Timeout:
+            logger.warning(f"⚠️ انتهت مهلة الاتصال")
+            if retry < max_retries - 1:
+                wait_time = (retry + 1) * 5
+                logger.info(f"⏱️ انتظار {wait_time} ثوانٍ قبل إعادة المحاولة...")
+                time.sleep(wait_time)
+                continue
+        
+        except Exception as e:
+            logger.error(f"❌ خطأ غير متوقع: {e}", exc_info=True)
+            if retry < max_retries - 1:
+                wait_time = (retry + 1) * 5
+                logger.info(f"⏱️ انتظار {wait_time} ثوانٍ قبل إعادة المحاولة...")
+                time.sleep(wait_time)
+                continue
+    
+    # إذا وصلنا إلى هنا، فقد فشلت جميع المحاولات
+    return None
+
 def get_all_invoices_complete():
-    """جلب جميع الفواتير من جميع الصفحات ولجميع المخازن المعروفة"""
+    """جلب جميع الفواتير من جميع الصفحات ولجميع الفروع المعروفة"""
     logger.info("📥 جلب جميع الفواتير...")
     
     headers = {"apikey": DAFTRA_APIKEY}
     all_invoices = []
     
-    # قائمة بمعرفات المخازن (store_id) التي تريد جلب الفواتير منها
-    store_ids = [1, 2, 3]
+    # قائمة بمعرفات الفروع التي تريد جلب الفواتير منها
+    branches = get_all_branches()
     
-    for store_id in store_ids:
-        logger.info(f"🔄 جلب الفواتير من المخزن (store_id): {store_id}...")
+    for branch_id in branches:
+        logger.info(f"🔄 جلب الفواتير من الفرع: {branch_id}...")
         page = 1
+        limit = 100
+        
         while True:
             try:
-                url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/{store_id}?page={page}&limit=100"
-                logger.info(f"📄 المخزن {store_id}, الصفحة {page}")
+                # استخدام نفس طريقة جلب الفواتير كما في كودك المحلي
+                url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1?filter[branch_id]={branch_id}&page={page}&limit={limit}"
+                logger.info(f"📄 الفرع {branch_id}, الصفحة {page}")
                 
-                response = requests.get(url, headers=headers, timeout=30)
+                data = fetch_with_retry(url, headers)
                 
-                if response.status_code != 200:
-                    logger.error(f"❌ خطأ في المخزن {store_id}, الصفحة {page}: {response.text}", exc_info=True)
+                if data is None:
+                    logger.error(f"❌ فشل استرجاع البيانات من الصفحة {page} بعد عدة محاولات")
                     break
                 
-                data = response.json()
                 invoices = data.get("data", [])
                 
                 if not invoices:
-                    logger.info(f"✅ انتهت الفواتير للمخزن {store_id}")
+                    logger.info(f"✅ انتهت الفواتير للفرع {branch_id}")
                     break
                 
-                logger.info(f"📊 وجدت {len(invoices)} فاتورة في المخزن {store_id}")
+                logger.info(f"📊 وجدت {len(invoices)} فاتورة في الفرع {branch_id}")
                 all_invoices.extend(invoices)
+                
+                # إذا كان عدد الفواتير في الصفحة أقل من الحد، فقد وصلنا للنهاية
+                if len(invoices) < limit:
+                    logger.info(f"🏁 وصلنا للصفحة الأخيرة ({page}). انتهاء الجلب لهذا الفرع.")
+                    break
                 
                 page += 1
                 time.sleep(1) # تأخير لتجنب تجاوز حدود معدل الطلبات
                 
             except Exception as e:
-                logger.error(f"❌ خطأ في جلب الفواتير من المخزن {store_id}, الصفحة {page}: {e}", exc_info=True)
+                logger.error(f"❌ خطأ في جلب الفواتير من الفرع {branch_id}, الصفحة {page}: {e}", exc_info=True)
                 break
     
-    logger.info(f"📋 إجمالي الفواتير التي تم جلبها من جميع المخازن: {len(all_invoices)}")
+    logger.info(f"📋 إجمالي الفواتير التي تم جلبها من جميع الفروع: {len(all_invoices)}")
     return all_invoices
 
 def get_invoice_full_details(invoice_id):
-    """جلب تفاصيل الفاتورة الكاملة من جميع المخازن المحتملة"""
+    """جلب تفاصيل الفاتورة الكاملة"""
     headers = {"apikey": DAFTRA_APIKEY}
     
-    # جرب جميع المخازن المعروفة لجلب التفاصيل
-    store_ids_for_details = [1, 2, 3]
-    
-    for branch in store_ids_for_details:
-        try:
-            url = f"{DAFTRA_URL}/v2/api/entity/invoice/show/{branch}/{invoice_id}"
-            logger.info(f"🔍 محاولة جلب تفاصيل الفاتورة {invoice_id} من المخزن {branch}")
-            response = requests.get(url, headers=headers, timeout=30)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # تسجيل الاستجابة الكاملة للتحليل
-                logger.info(f"✅ استجابة API لتفاصيل الفاتورة {invoice_id} من المخزن {branch}")
-                
-                # البحث عن البيانات في مسارات مختلفة
-                invoice_data = None
-                if "data" in data:
-                    if isinstance(data["data"], dict):
-                        if "Invoice" in data["data"]:
-                            invoice_data = data["data"]["Invoice"]
-                        else:
-                            invoice_data = data["data"]
-                
-                if invoice_data and invoice_data.get("id"):
-                    logger.info(f"✅ وجدت تفاصيل الفاتورة {invoice_id} في المخزن {branch}")
-                    
-                    # تسجيل القيم المالية المهمة
-                    logger.info(f"💰 القيم المالية للفاتورة {invoice_id}:")
-                    logger.info(f"   - المبلغ الإجمالي (summary_total): {invoice_data.get('summary_total')}")
-                    logger.info(f"   - المبلغ المدفوع (summary_paid): {invoice_data.get('summary_paid')}")
-                    logger.info(f"   - المبلغ غير المدفوع (summary_unpaid): {invoice_data.get('summary_unpaid')}")
-                    
-                    # البحث عن بنود الفاتورة في مسارات مختلفة
-                    invoice_items = None
-                    
-                    # المسار المتوقع الأول
-                    if "invoice_item" in invoice_data:
-                        invoice_items = invoice_data["invoice_item"]
-                        logger.info(f"✅ وجدت {len(invoice_items)} بند في المسار invoice_item")
-                    
-                    # المسار المتوقع الثاني
-                    elif "invoice_items" in invoice_data:
-                        invoice_items = invoice_data["invoice_items"]
-                        logger.info(f"✅ وجدت {len(invoice_items)} بند في المسار invoice_items")
-                    
-                    # المسار المتوقع الثالث - البحث في الاستجابة الكاملة
-                    elif "invoice_item" in data:
-                        invoice_items = data["invoice_item"]
-                        logger.info(f"✅ وجدت {len(invoice_items)} بند في المسار الرئيسي invoice_item")
-                    
-                    # تسجيل عدم وجود بنود
-                    else:
-                        logger.warning(f"⚠️ الفاتورة {invoice_id} من المخزن {branch} لا تحتوي على بنود في استجابة API.")
-                        
-                        # تسجيل المفاتيح المتاحة للمساعدة في التشخيص
-                        logger.info(f"🔑 المفاتيح المتاحة في بيانات الفاتورة: {list(invoice_data.keys())}")
-                        
-                        # البحث عن أي مفتاح قد يحتوي على كلمة "item"
-                        item_keys = [key for key in invoice_data.keys() if "item" in key.lower()]
-                        if item_keys:
-                            logger.info(f"🔍 وجدت مفاتيح قد تحتوي على بنود: {item_keys}")
-                    
-                    # إضافة البنود إلى بيانات الفاتورة
-                    if invoice_items:
-                        invoice_data["invoice_item"] = invoice_items
-                    
-                    return invoice_data
-                    
-        except Exception as e:
-            logger.error(f"❌ خطأ أثناء محاولة جلب تفاصيل الفاتورة {invoice_id} من المخزن {branch}: {e}", exc_info=True)
-            continue
-    
-    logger.warning(f"⚠️ لم أجد تفاصيل للفاتورة {invoice_id} في أي من المخازن المعروفة.")
-    return None
-
-def save_invoice_complete(invoice_summary, invoice_details=None):
-    """حفظ الفاتورة بجميع البيانات"""
     try:
-        invoice_id = str(invoice_summary["id"])
+        # استخدام نفس طريقة جلب تفاصيل الفاتورة كما في كودك المحلي
+        url = f"{DAFTRA_URL}/v2/api/entity/invoice/{invoice_id}"
+        logger.info(f"🔍 جلب تفاصيل الفاتورة {invoice_id}")
+        
+        data = fetch_with_retry(url, headers)
+        
+        if data is None:
+            logger.error(f"❌ فشل في جلب تفاصيل الفاتورة {invoice_id} بعد عدة محاولات")
+            return None
+        
+        # تسجيل القيم المالية المهمة
+        logger.info(f"💰 القيم المالية للفاتورة {invoice_id}:")
+        logger.info(f"   - المبلغ الإجمالي (summary_total): {data.get('summary_total')}")
+        logger.info(f"   - المبلغ المدفوع (summary_paid): {data.get('summary_paid')}")
+        logger.info(f"   - المبلغ غير المدفوع (summary_unpaid): {data.get('summary_unpaid')}")
+        
+        # البحث عن بنود الفاتورة
+        invoice_items = data.get("invoice_item", [])
+        if invoice_items:
+            if not isinstance(invoice_items, list):
+                invoice_items = [invoice_items]
+            logger.info(f"✅ وجدت {len(invoice_items)} بند في الفاتورة {invoice_id}")
+        else:
+            logger.warning(f"⚠️ الفاتورة {invoice_id} لا تحتوي على بنود في استجابة API.")
+        
+        return data
+            
+    except Exception as e:
+        logger.error(f"❌ خطأ أثناء محاولة جلب تفاصيل الفاتورة {invoice_id}: {e}", exc_info=True)
+        return None
+
+def save_invoice_complete(invoice_data):
+    """حفظ الفاتورة في قاعدة البيانات Supabase"""
+    try:
+        invoice_id = str(invoice_data.get("id"))
         invoice_uuid = generate_uuid_from_number(invoice_id)
         
         headers = {
@@ -182,46 +188,26 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
             "Content-Type": "application/json"
         }
         
-        # استخدم بيانات التفاصيل إذا كانت متاحة، وإلا استخدم الملخص
-        source_data = invoice_details if invoice_details else invoice_summary
-        
-        # البيانات الأساسية
+        # إعداد البيانات وفقاً لهيكل جدول الفواتير في Supabase
         payload = {
             "id": invoice_uuid,
-            "invoice_no": safe_string(source_data.get("no", "")),
+            "invoice_no": safe_string(invoice_data.get("no", "")),
+            "invoice_date": safe_string(invoice_data.get("date", "")),
+            "customer_id": safe_string(invoice_data.get("client_id", "")),
+            "total": safe_float(invoice_data.get("summary_total", 0)),
+            "summary_paid": safe_float(invoice_data.get("summary_paid", 0)),
+            "summary_unpaid": safe_float(invoice_data.get("summary_unpaid", 0)),
+            "branch": invoice_data.get("branch_id"),
+            "client_id": safe_string(invoice_data.get("client_id", "")),
+            "client_business_name": safe_string(invoice_data.get("client_business_name", ""), 255),
+            "client_city": safe_string(invoice_data.get("client_city", ""))
         }
-        
-        # استخراج القيم المالية مباشرة من الحقول الصحيحة
-        # استخدام الحقول المباشرة من استجابة API
-        payload["total"] = safe_float(source_data.get("summary_total", 0))
-        payload["summary_paid"] = safe_float(source_data.get("summary_paid", 0))
-        payload["summary_unpaid"] = safe_float(source_data.get("summary_unpaid", 0))
         
         # تسجيل القيم المالية للتأكد من صحتها
         logger.info(f"💰 القيم المالية التي سيتم حفظها للفاتورة {invoice_id}:")
         logger.info(f"   - المبلغ الإجمالي (total): {payload['total']}")
         logger.info(f"   - المبلغ المدفوع (summary_paid): {payload['summary_paid']}")
         logger.info(f"   - المبلغ غير المدفوع (summary_unpaid): {payload['summary_unpaid']}")
-        
-        # البيانات الإضافية
-        if source_data.get("date"):
-            payload["invoice_date"] = safe_string(source_data["date"])
-        
-        if source_data.get("client_business_name"):
-            payload["client_business_name"] = safe_string(source_data["client_business_name"], 255)
-        
-        if source_data.get("customer_id"):
-            payload["customer_id"] = safe_string(source_data["customer_id"])
-        
-        # معلومات إضافية من التفاصيل
-        if invoice_details:
-            if invoice_details.get("notes"):
-                payload["notes"] = safe_string(invoice_details["notes"], 500)
-            
-            if invoice_details.get("created_at"):
-                payload["created_at"] = safe_string(invoice_details["created_at"])
-            elif invoice_details.get("created"):
-                payload["created_at"] = safe_string(invoice_details["created"])
         
         # تنظيف البيانات
         clean_payload = {k: v for k, v in payload.items() if v not in [None, "", "None"]}
@@ -243,11 +229,11 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
             return None
             
     except Exception as e:
-        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_summary.get('id')}: {e}", exc_info=True)
+        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_data.get('id')}: {e}", exc_info=True)
         return None
 
-def save_invoice_items_complete(invoice_uuid, invoice_id, items):
-    """حفظ بنود الفاتورة بشكل كامل"""
+def save_invoice_items_complete(invoice_uuid, invoice_id, items, client_business_name=""):
+    """حفظ بنود الفاتورة في قاعدة البيانات Supabase"""
     if not items:
         logger.warning(f"⚠️ لا توجد بنود لحفظها للفاتورة {invoice_id}")
         return 0
@@ -269,35 +255,12 @@ def save_invoice_items_complete(invoice_uuid, invoice_id, items):
             # تسجيل بيانات البند للتشخيص
             logger.info(f"🔍 بيانات البند {i}: {json.dumps(item)}")
             
-            # البحث عن الكمية في مسارات مختلفة
-            quantity = None
-            if "quantity" in item:
-                quantity = safe_float(item["quantity"], 0)
-            elif "qty" in item:
-                quantity = safe_float(item["qty"], 0)
-            else:
-                # البحث عن أي مفتاح يحتوي على "qty" أو "quantity"
-                qty_keys = [key for key in item.keys() if "qty" in key.lower() or "quantity" in key.lower()]
-                if qty_keys:
-                    quantity = safe_float(item[qty_keys[0]], 0)
-                else:
-                    logger.warning(f"⚠️ لم أجد حقل الكمية في البند {i}")
-                    quantity = 1  # قيمة افتراضية
-            
-            # البحث عن سعر الوحدة في مسارات مختلفة
-            unit_price = None
-            if "unit_price" in item:
-                unit_price = safe_float(item["unit_price"], 0)
-            elif "price" in item:
-                unit_price = safe_float(item["price"], 0)
-            else:
-                # البحث عن أي مفتاح يحتوي على "price"
-                price_keys = [key for key in item.keys() if "price" in key.lower() and "total" not in key.lower()]
-                if price_keys:
-                    unit_price = safe_float(item[price_keys[0]], 0)
-                else:
-                    logger.warning(f"⚠️ لم أجد حقل سعر الوحدة في البند {i}")
-                    unit_price = 0
+            # استخراج البيانات المطلوبة
+            quantity = safe_float(item.get("quantity", 0))
+            unit_price = safe_float(item.get("unit_price", 0))
+            total_price = quantity * unit_price
+            product_id = safe_string(item.get("product_id", ""))
+            product_code = safe_string(item.get("product_code", ""))
             
             if quantity <= 0:
                 logger.warning(f"⚠️ البند {i} للفاتورة {invoice_id} لديه كمية صفر أو أقل. تخطي.")
@@ -310,23 +273,20 @@ def save_invoice_items_complete(invoice_uuid, invoice_id, items):
             else:
                 item_uuid = str(uuid.uuid4())
             
+            # إعداد البيانات وفقاً لهيكل جدول بنود الفواتير في Supabase
             item_payload = {
                 "id": item_uuid,
                 "invoice_id": invoice_uuid,
+                "product_id": product_id,
                 "quantity": quantity,
+                "total_price": total_price,
                 "unit_price": unit_price,
-                "total_price": quantity * unit_price
+                "product_code": product_code,
+                "client_business_name": client_business_name
             }
             
-            # معلومات إضافية
-            if item.get("product_id"):
-                item_payload["product_id"] = safe_string(item["product_id"])
-            
-            if item.get("product_code"):
-                item_payload["product_code"] = safe_string(item["product_code"])
-            
             # تسجيل البيانات التي سيتم حفظها
-            logger.info(f"💾 حفظ البند {i} للفاتورة {invoice_id}: الكمية={quantity}, السعر={unit_price}, الإجمالي={quantity * unit_price}")
+            logger.info(f"💾 حفظ البند {i} للفاتورة {invoice_id}: الكمية={quantity}, السعر={unit_price}, الإجمالي={total_price}")
             
             response = requests.post(
                 f"{SUPABASE_URL}/rest/v1/invoice_items",
@@ -375,16 +335,21 @@ def sync_invoices():
                 # جلب التفاصيل الكاملة
                 details = get_invoice_full_details(invoice_id)
                 
-                # حفظ الفاتورة (مع أو بدون تفاصيل)
-                invoice_uuid = save_invoice_complete(invoice, details)
+                if not details:
+                    logger.error(f"❌ لم يتم العثور على تفاصيل للفاتورة {invoice_id}. تخطي.")
+                    continue
+                
+                # حفظ الفاتورة
+                invoice_uuid = save_invoice_complete(details)
                 
                 if invoice_uuid:
                     result["invoices"] += 1
                     
                     # حفظ البنود إذا كانت متاحة
-                    if details and details.get("invoice_item"):
-                        items = details["invoice_item"]
-                        saved_items = save_invoice_items_complete(invoice_uuid, invoice_id, items)
+                    items = details.get("invoice_item", [])
+                    if items:
+                        client_business_name = safe_string(details.get("client_business_name", ""))
+                        saved_items = save_invoice_items_complete(invoice_uuid, invoice_id, items, client_business_name)
                         result["items"] += saved_items
                     else:
                         logger.warning(f"⚠️ الفاتورة {invoice_id} لا تحتوي على بنود في التفاصيل. تخطي حفظ البنود.")
