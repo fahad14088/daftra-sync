@@ -47,67 +47,67 @@ def safe_string(value, max_length=None):
         return ""
 
 def get_all_invoices_complete():
-    """جلب جميع الفواتير من جميع الصفحات ولجميع الفروع المعروفة"""
+    """جلب جميع الفواتير من جميع الصفحات ولجميع المخازن المعروفة"""
     logger.info("📥 جلب جميع الفواتير...")
     
     headers = {"apikey": DAFTRA_APIKEY}
     all_invoices = []
     
-    # قائمة بمعرفات المتاجر (الفروع) التي تريد جلب الفواتير منها
-    # بناءً على المناقشة السابقة: 3 للرئيسي، 2 للعويضة
-    store_ids = [3, 2] 
+    # قائمة بمعرفات المخازن (store_id) التي تريد جلب الفواتير منها
+    # تم إضافة store_id=1 بناءً على طلب المستخدم
+    store_ids = [1, 2, 3]
     
     for store_id in store_ids:
-        logger.info(f"🔄 جلب الفواتير من الفرع (store_id): {store_id}...")
+        logger.info(f"🔄 جلب الفواتير من المخزن (store_id): {store_id}...")
         page = 1
         while True:
             try:
                 url = f"{DAFTRA_URL}/v2/api/entity/invoice/list/{store_id}?page={page}&limit=100"
-                logger.info(f"📄 الفرع {store_id}, الصفحة {page}")
+                logger.info(f"📄 المخزن {store_id}, الصفحة {page}")
                 
                 response = requests.get(url, headers=headers, timeout=30)
                 
                 if response.status_code != 200:
-                    logger.error(f"❌ خطأ في الفرع {store_id}, الصفحة {page}: {response.text}", exc_info=True)
+                    logger.error(f"❌ خطأ في المخزن {store_id}, الصفحة {page}: {response.text}", exc_info=True)
                     break
                 
                 data = response.json()
                 invoices = data.get("data", [])
                 
                 if not invoices:
-                    logger.info(f"✅ انتهت الفواتير للفرع {store_id}")
+                    logger.info(f"✅ انتهت الفواتير للمخزن {store_id}")
                     break
                 
-                logger.info(f"📊 وجدت {len(invoices)} فاتورة في الفرع {store_id}")
+                logger.info(f"📊 وجدت {len(invoices)} فاتورة في المخزن {store_id}")
                 all_invoices.extend(invoices)
                 
                 page += 1
                 time.sleep(1) # تأخير لتجنب تجاوز حدود معدل الطلبات
                 
             except Exception as e:
-                logger.error(f"❌ خطأ في جلب الفواتير من الفرع {store_id}, الصفحة {page}: {e}", exc_info=True)
+                logger.error(f"❌ خطأ في جلب الفواتير من المخزن {store_id}, الصفحة {page}: {e}", exc_info=True)
                 break
     
-    logger.info(f"📋 إجمالي الفواتير التي تم جلبها من جميع الفروع: {len(all_invoices)}")
+    logger.info(f"📋 إجمالي الفواتير التي تم جلبها من جميع المخازن: {len(all_invoices)}")
     return all_invoices
 
 def get_invoice_full_details(invoice_id):
-    """جلب تفاصيل الفاتورة الكاملة من جميع الفروع المحتملة"""
+    """جلب تفاصيل الفاتورة الكاملة من جميع المخازن المحتملة"""
     headers = {"apikey": DAFTRA_APIKEY}
     
-    # جرب جميع الفروع المعروفة لجلب التفاصيل
-    # بناءً على المناقشة السابقة: 3 للرئيسي، 2 للعويضة
-    store_ids_for_details = [3, 2]
+    # جرب جميع المخازن المعروفة لجلب التفاصيل
+    # تم إضافة store_id=1 بناءً على طلب المستخدم
+    store_ids_for_details = [1, 2, 3]
     
     for branch in store_ids_for_details:
         try:
             url = f"{DAFTRA_URL}/v2/api/entity/invoice/show/{branch}/{invoice_id}"
-            logger.info(f"🔍 محاولة جلب تفاصيل الفاتورة {invoice_id} من الفرع {branch}")
+            logger.info(f"🔍 محاولة جلب تفاصيل الفاتورة {invoice_id} من المخزن {branch}")
             response = requests.get(url, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
-                logger.debug(f"✅ استجابة API لتفاصيل الفاتورة {invoice_id} من الفرع {branch}: {json.dumps(data, indent=2)}") # تسجيل الاستجابة الكاملة
+                logger.debug(f"✅ استجابة API لتفاصيل الفاتورة {invoice_id} من المخزن {branch}: {json.dumps(data, indent=2)}") # تسجيل الاستجابة الكاملة
                 
                 invoice_data = None
                 if data.get("data", {}).get("Invoice"):
@@ -116,19 +116,19 @@ def get_invoice_full_details(invoice_id):
                     invoice_data = data["data"]
                 
                 if invoice_data and invoice_data.get("id"):
-                    logger.info(f"✅ وجدت تفاصيل الفاتورة {invoice_id} في الفرع {branch}")
+                    logger.info(f"✅ وجدت تفاصيل الفاتورة {invoice_id} في المخزن {branch}")
                     # تحقق من وجود بنود الفاتورة هنا
                     if invoice_data.get("invoice_item"):
                         logger.info(f"✅ الفاتورة {invoice_id} تحتوي على {len(invoice_data.get('invoice_item'))} بند.")
                     else:
-                        logger.warning(f"⚠️ الفاتورة {invoice_id} من الفرع {branch} لا تحتوي على بنود في استجابة API.")
+                        logger.warning(f"⚠️ الفاتورة {invoice_id} من المخزن {branch} لا تحتوي على بنود في استجابة API.")
                     return invoice_data
                     
         except Exception as e:
-            logger.error(f"❌ خطأ أثناء محاولة جلب تفاصيل الفاتورة {invoice_id} من الفرع {branch}: {e}", exc_info=True)
+            logger.error(f"❌ خطأ أثناء محاولة جلب تفاصيل الفاتورة {invoice_id} من المخزن {branch}: {e}", exc_info=True)
             continue
     
-    logger.warning(f"⚠️ لم أجد تفاصيل للفاتورة {invoice_id} في أي من الفروع المعروفة.")
+    logger.warning(f"⚠️ لم أجد تفاصيل للفاتورة {invoice_id} في أي من المخازن المعروفة.")
     return None
 
 def save_invoice_complete(invoice_summary, invoice_details=None):
@@ -325,9 +325,9 @@ def sync_invoices():
         logger.info("=" * 80)
         logger.info("🎯 النتائج النهائية:")
         logger.info(f"📊 إجمالي الفواتير التي تم جلبها: {len(all_invoices)}")
-        logger.info(f"✅ فواتير محفوظة بنجاح: {result["invoices"]}")
-        logger.info(f"📦 بنود محفوظة بنجاح: {result["items"]}")
-        logger.info(f"❌ عدد الأخطاء التي حدثت: {len(result["errors"])}")
+        logger.info(f"✅ فواتير محفوظة بنجاح: {result['invoices']}")
+        logger.info(f"📦 بنود محفوظة بنجاح: {result['items']}")
+        logger.info(f"❌ عدد الأخطاء التي حدثت: {len(result['errors'])}")
         
         if len(all_invoices) > 0:
             success_rate = (result["invoices"] / len(all_invoices)) * 100
@@ -341,9 +341,7 @@ def sync_invoices():
         return result
         
     except Exception as e:
-        error_msg = f"خطأ عام أثناء المزامنة: {e}"
-        result["errors"].append(error_msg)
-        logger.error(f"💥 {error_msg}", exc_info=True)
+        logger.error(f"❌ خطأ عام في المزامنة: {e}", exc_info=True)
         return result
 
 if __name__ == "__main__":
