@@ -54,7 +54,6 @@ def get_all_invoices_complete():
     all_invoices = []
     
     # قائمة بمعرفات المخازن (store_id) التي تريد جلب الفواتير منها
-    # تم إضافة store_id=1 بناءً على طلب المستخدم
     store_ids = [1, 2, 3]
     
     for store_id in store_ids:
@@ -96,7 +95,6 @@ def get_invoice_full_details(invoice_id):
     headers = {"apikey": DAFTRA_APIKEY}
     
     # جرب جميع المخازن المعروفة لجلب التفاصيل
-    # تم إضافة store_id=1 بناءً على طلب المستخدم
     store_ids_for_details = [1, 2, 3]
     
     for branch in store_ids_for_details:
@@ -107,21 +105,62 @@ def get_invoice_full_details(invoice_id):
             
             if response.status_code == 200:
                 data = response.json()
-                logger.debug(f"✅ استجابة API لتفاصيل الفاتورة {invoice_id} من المخزن {branch}: {json.dumps(data, indent=2)}") # تسجيل الاستجابة الكاملة
                 
+                # تسجيل الاستجابة الكاملة للتحليل
+                logger.info(f"✅ استجابة API لتفاصيل الفاتورة {invoice_id} من المخزن {branch}")
+                
+                # البحث عن البيانات في مسارات مختلفة
                 invoice_data = None
-                if data.get("data", {}).get("Invoice"):
-                    invoice_data = data["data"]["Invoice"]
-                elif data.get("data") and isinstance(data["data"], dict):
-                    invoice_data = data["data"]
+                if "data" in data:
+                    if isinstance(data["data"], dict):
+                        if "Invoice" in data["data"]:
+                            invoice_data = data["data"]["Invoice"]
+                        else:
+                            invoice_data = data["data"]
                 
                 if invoice_data and invoice_data.get("id"):
                     logger.info(f"✅ وجدت تفاصيل الفاتورة {invoice_id} في المخزن {branch}")
-                    # تحقق من وجود بنود الفاتورة هنا
-                    if invoice_data.get("invoice_item"):
-                        logger.info(f"✅ الفاتورة {invoice_id} تحتوي على {len(invoice_data.get('invoice_item'))} بند.")
+                    
+                    # تسجيل القيم المالية المهمة
+                    logger.info(f"💰 القيم المالية للفاتورة {invoice_id}:")
+                    logger.info(f"   - المبلغ الإجمالي (summary_total): {invoice_data.get('summary_total')}")
+                    logger.info(f"   - المبلغ المدفوع (summary_paid): {invoice_data.get('summary_paid')}")
+                    logger.info(f"   - المبلغ غير المدفوع (summary_unpaid): {invoice_data.get('summary_unpaid')}")
+                    
+                    # البحث عن بنود الفاتورة في مسارات مختلفة
+                    invoice_items = None
+                    
+                    # المسار المتوقع الأول
+                    if "invoice_item" in invoice_data:
+                        invoice_items = invoice_data["invoice_item"]
+                        logger.info(f"✅ وجدت {len(invoice_items)} بند في المسار invoice_item")
+                    
+                    # المسار المتوقع الثاني
+                    elif "invoice_items" in invoice_data:
+                        invoice_items = invoice_data["invoice_items"]
+                        logger.info(f"✅ وجدت {len(invoice_items)} بند في المسار invoice_items")
+                    
+                    # المسار المتوقع الثالث - البحث في الاستجابة الكاملة
+                    elif "invoice_item" in data:
+                        invoice_items = data["invoice_item"]
+                        logger.info(f"✅ وجدت {len(invoice_items)} بند في المسار الرئيسي invoice_item")
+                    
+                    # تسجيل عدم وجود بنود
                     else:
                         logger.warning(f"⚠️ الفاتورة {invoice_id} من المخزن {branch} لا تحتوي على بنود في استجابة API.")
+                        
+                        # تسجيل المفاتيح المتاحة للمساعدة في التشخيص
+                        logger.info(f"🔑 المفاتيح المتاحة في بيانات الفاتورة: {list(invoice_data.keys())}")
+                        
+                        # البحث عن أي مفتاح قد يحتوي على كلمة "item"
+                        item_keys = [key for key in invoice_data.keys() if "item" in key.lower()]
+                        if item_keys:
+                            logger.info(f"🔍 وجدت مفاتيح قد تحتوي على بنود: {item_keys}")
+                    
+                    # إضافة البنود إلى بيانات الفاتورة
+                    if invoice_items:
+                        invoice_data["invoice_item"] = invoice_items
+                    
                     return invoice_data
                     
         except Exception as e:
@@ -150,8 +189,19 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
         payload = {
             "id": invoice_uuid,
             "invoice_no": safe_string(source_data.get("no", "")),
-            "total": safe_float(source_data.get("total", 0)),
         }
+        
+        # استخراج القيم المالية مباشرة من الحقول الصحيحة
+        # استخدام الحقول المباشرة من استجابة API
+        payload["total"] = safe_float(source_data.get("summary_total", 0))
+        payload["summary_paid"] = safe_float(source_data.get("summary_paid", 0))
+        payload["summary_unpaid"] = safe_float(source_data.get("summary_unpaid", 0))
+        
+        # تسجيل القيم المالية للتأكد من صحتها
+        logger.info(f"💰 القيم المالية التي سيتم حفظها للفاتورة {invoice_id}:")
+        logger.info(f"   - المبلغ الإجمالي (total): {payload['total']}")
+        logger.info(f"   - المبلغ المدفوع (summary_paid): {payload['summary_paid']}")
+        logger.info(f"   - المبلغ غير المدفوع (summary_unpaid): {payload['summary_unpaid']}")
         
         # البيانات الإضافية
         if source_data.get("date"):
@@ -163,13 +213,6 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
         if source_data.get("customer_id"):
             payload["customer_id"] = safe_string(source_data["customer_id"])
         
-        # حالة الدفع (مدفوع/غير مدفوع)
-        if source_data.get("paid_amount") is not None:
-            paid_amount = safe_float(source_data.get("paid_amount", 0))
-            total_amount = safe_float(source_data.get("total", 0))
-            payload["summary_paid"] = paid_amount
-            payload["summary_unpaid"] = max(0, total_amount - paid_amount)
-        
         # معلومات إضافية من التفاصيل
         if invoice_details:
             if invoice_details.get("notes"):
@@ -177,6 +220,8 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
             
             if invoice_details.get("created_at"):
                 payload["created_at"] = safe_string(invoice_details["created_at"])
+            elif invoice_details.get("created"):
+                payload["created_at"] = safe_string(invoice_details["created"])
         
         # تنظيف البيانات
         clean_payload = {k: v for k, v in payload.items() if v not in [None, "", "None"]}
@@ -221,8 +266,38 @@ def save_invoice_items_complete(invoice_uuid, invoice_id, items):
     
     for i, item in enumerate(items, 1):
         try:
-            quantity = safe_float(item.get("quantity", 0))
-            unit_price = safe_float(item.get("unit_price", 0))
+            # تسجيل بيانات البند للتشخيص
+            logger.info(f"🔍 بيانات البند {i}: {json.dumps(item)}")
+            
+            # البحث عن الكمية في مسارات مختلفة
+            quantity = None
+            if "quantity" in item:
+                quantity = safe_float(item["quantity"], 0)
+            elif "qty" in item:
+                quantity = safe_float(item["qty"], 0)
+            else:
+                # البحث عن أي مفتاح يحتوي على "qty" أو "quantity"
+                qty_keys = [key for key in item.keys() if "qty" in key.lower() or "quantity" in key.lower()]
+                if qty_keys:
+                    quantity = safe_float(item[qty_keys[0]], 0)
+                else:
+                    logger.warning(f"⚠️ لم أجد حقل الكمية في البند {i}")
+                    quantity = 1  # قيمة افتراضية
+            
+            # البحث عن سعر الوحدة في مسارات مختلفة
+            unit_price = None
+            if "unit_price" in item:
+                unit_price = safe_float(item["unit_price"], 0)
+            elif "price" in item:
+                unit_price = safe_float(item["price"], 0)
+            else:
+                # البحث عن أي مفتاح يحتوي على "price"
+                price_keys = [key for key in item.keys() if "price" in key.lower() and "total" not in key.lower()]
+                if price_keys:
+                    unit_price = safe_float(item[price_keys[0]], 0)
+                else:
+                    logger.warning(f"⚠️ لم أجد حقل سعر الوحدة في البند {i}")
+                    unit_price = 0
             
             if quantity <= 0:
                 logger.warning(f"⚠️ البند {i} للفاتورة {invoice_id} لديه كمية صفر أو أقل. تخطي.")
@@ -250,6 +325,9 @@ def save_invoice_items_complete(invoice_uuid, invoice_id, items):
             if item.get("product_code"):
                 item_payload["product_code"] = safe_string(item["product_code"])
             
+            # تسجيل البيانات التي سيتم حفظها
+            logger.info(f"💾 حفظ البند {i} للفاتورة {invoice_id}: الكمية={quantity}, السعر={unit_price}, الإجمالي={quantity * unit_price}")
+            
             response = requests.post(
                 f"{SUPABASE_URL}/rest/v1/invoice_items",
                 headers=headers,
@@ -259,6 +337,7 @@ def save_invoice_items_complete(invoice_uuid, invoice_id, items):
             
             if response.status_code in [200, 201, 409]:
                 saved_count += 1
+                logger.info(f"✅ تم حفظ البند {i} للفاتورة {invoice_id}")
             else:
                 logger.error(f"❌ فشل حفظ البند {i} للفاتورة {invoice_id}: {response.text}", exc_info=True)
                 
