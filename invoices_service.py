@@ -3,21 +3,50 @@ import requests
 import time
 import logging
 import hashlib
+from datetime import datetime
+from sync_utils import get_last_sync_time, update_sync_time
 
-# تفعيل اللوج
+# ———————— إعداد اللوج ————————
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-DAFTRA_URL    = os.getenv("DAFTRA_URL").rstrip('/')
-DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
-SUPABASE_URL  = os.getenv("SUPABASE_URL").rstrip('/')
+# ———————— إعداد المتغيرات ————————
+DAFTRA_URL    = os.getenv("BASE_URL").rstrip("/")            # مثال: "https://shadowpeace.daftra.com/"
+DAFTRA_HEADERS = {"apikey": os.getenv("DAFTRA_APIKEY")}      # أو استعمل HEADERS من config.py
+SUPABASE_URL  = os.getenv("SUPABASE_URL").rstrip("/")
 SUPABASE_KEY  = os.getenv("SUPABASE_KEY")
 
-def generate_uuid(s: str) -> str:
-    h = hashlib.md5(s.encode()).hexdigest()
+# ———————— دوال مساعدة ————————
+
+def generate_uuid_from_number(number: str) -> str:
+    """توليد UUID ثابت من رقم الفاتورة."""
+    h = hashlib.md5(number.encode()).hexdigest()
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
-def upsert(table, payload):
+def safe_float(v, default=0.0):
+    try:
+        if v is None or v == "":
+            return default
+        return float(str(v).replace(",", ""))
+    except:
+        return default
+
+def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
+    """GET مع إعادة محاولة تلقائية."""
+    for i in range(max_retries):
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=timeout)
+            if r.status_code == 200:
+                return r.json()
+            logger.warning(f"⚠️ GET {r.url} → {r.status_code}")
+        except Exception as e:
+            logger.warning(f"⚠️ exception on GET {url}: {e}")
+        # تأخير قبل إعادة المحاولة
+        time.sleep((i+1)*2)
+    return None
+
+def upsert(table: str, payload: dict) -> bool:
+    """INSERT أو UPDATE في Supabase REST مع on_conflict=id."""
     url = f"{SUPABASE_URL}/rest/v1/{table}?on_conflict=id"
     headers = {
         "apikey":        SUPABASE_KEY,
@@ -26,103 +55,121 @@ def upsert(table, payload):
         "Prefer":        "resolution=merge-duplicates"
     }
     r = requests.post(url, headers=headers, json=payload, timeout=30)
-    if r.status_code not in (200,201,409):
-        logger.error(f"upsert {table} failed [{r.status_code}]: {r.text}")
-        return False
-    return True
+    if r.status_code in (200,201,409):
+        return True
+    logger.error(f"❌ upsert {table} failed [{r.status_code}]: {r.text}")
+    return False
 
-def fetch_invoice(inv_id, branch):
-    """جلب بيانات الفاتورة الأساسية (بدون بنود)."""
-    headers = {"apikey": DAFTRA_APIKEY}
-    resp = requests.get(f"{DAFTRA_URL}/v2/api/entity/invoice/show/{branch}/{inv_id}",
-                        headers=headers, timeout=30)
-    if resp.status_code != 200:
-        logger.error(f"show invoice {inv_id}@branch {branch} → {resp.status_code}")
-        return None
-    return resp.json().get("data")
+def get_all_branches():
+    """قائمة الفروع الثابتة كما في برنامجك المحلي."""
+    branches = [
+        {"id": 1, "name": "Main"},
+        {"id": 2, "name": "العويضة"}
+    ]
+    ids = [b["id"] for b in branches]
+    logger.info(f"✅ استخدام الفروع: {ids}")
+    return ids
 
-def fetch_items(inv_id, branch):
-    """جلب بنود الفاتورة من الـ endpoint المخصَّص."""
-    headers = {"apikey": DAFTRA_APIKEY}
-    params = {"page":1, "limit":100, "invoice_id": inv_id}
-    resp = requests.get(f"{DAFTRA_URL}/v2/api/entity/invoice-item/list/{branch}",
-                        headers=headers, params=params, timeout=30)
-    if resp.status_code != 200:
-        logger.error(f"list items for {inv_id}@branch {branch} → {resp.status_code}")
-        return []
-    return resp.json().get("data", [])
+# ———————— الدالة الرئيسية ————————
 
-def sync_invoices():
-    headers = {"apikey": DAFTRA_APIKEY}
-    page = 1
-    tot_inv = tot_items = 0
+def sync_invoices_to_supabase():
+    # تحميل آخر وقت تزامن
+    last_sync_str = get_last_sync_time("sales_invoices")
+    try:
+        last_sync = datetime.fromisoformat(last_sync_str)
+    except:
+        last_sync = datetime(2000,1,1)
+    logger.info(f"🧠 آخر تزامن: {last_sync}")
 
-    # 1) جلب ملخص الفواتير
-    while True:
-        resp = requests.get(f"{DAFTRA_URL}/v2/api/entity/invoice/list/1",
-                            headers=headers,
-                            params={"page": page, "limit":100},
-                            timeout=30)
-        if resp.status_code != 200:
-            break
-        batch = resp.json().get("data", [])
-        if not batch:
-            break
+    inserted_invoices = 0
+    inserted_items    = 0
+    limit = 20
 
-        for summary in batch:
-            inv_id   = str(summary["id"])
-            branch   = summary.get("store_id")
-            if branch is None:
-                logger.error(f"Invoice {inv_id} has no store_id → skipping")
-                continue
-
-            # 2) جلب تفاصيل الفاتورة الأساسية
-            inv = fetch_invoice(inv_id, branch)
-            if not inv:
-                continue
-
-            # 3) جلب البنود
-            items = fetch_items(inv_id, branch)
-            if not items:
-                logger.error(f"❌ Invoice {inv_id} has NO items → bug!")
-                continue
-            logger.info(f"Invoice {inv_id} has {len(items)} items")
-
-            # 4) حفظ الفاتورة
-            inv_uuid = generate_uuid(inv_id)
-            inv_pl = {
-                "id":              inv_uuid,
-                "invoice_no":      inv.get("no",""),
-                "total":           float(inv.get("total",0)),
-                "invoice_date":    inv.get("date",""),
-                "branch":          branch,
-                "client_business_name": inv.get("client_business_name",""),
-                "customer_id":     summary.get("client_id") or summary.get("customer_id",""),
-                "summary_paid":    float(inv.get("paid_amount",0)),
-                "summary_unpaid":  max(0, float(inv.get("total",0)) - float(inv.get("paid_amount",0)))
+    for branch_id in get_all_branches():
+        page = 1
+        while True:
+            # 1) جلب قائمة الفواتير مع فلتر branch_id
+            url_list = f"{DAFTRA_URL}/v2/api/entity/invoice/list/1"
+            params = {
+                "filter[branch_id]": branch_id,
+                "page": page,
+                "limit": limit
             }
-            if upsert("invoices", inv_pl):
-                tot_inv += 1
+            data = fetch_with_retry(url_list, DAFTRA_HEADERS, params=params)
+            if not data:
+                break
 
-                # 5) حفظ البنود
-                for it in items:
-                    item_uuid = generate_uuid(f"{it.get('id')}-{inv_id}")
-                    it_pl = {
-                        "id":          item_uuid,
-                        "invoice_id":  inv_uuid,
-                        "product_id":  it.get("product_id",""),
-                        "product_code": it.get("product_code",""),
-                        "quantity":    float(it.get("quantity",0)),
-                        "unit_price":  float(it.get("unit_price", it.get("price",0))),
-                        "total_price": float(it.get("quantity",0)) * float(it.get("unit_price", it.get("price",0)))
-                    }
-                    if upsert("invoice_items", it_pl):
-                        tot_items += 1
+            inv_list = data.get("data", [])
+            if not inv_list:
+                break
 
-        page += 1
-        time.sleep(0.2)
+            logger.info(f"📄 فرع {branch_id} صفحة {page}: {len(inv_list)} فواتير")
 
-    logger.info(f"Done. Invoices: {tot_inv}, Items: {tot_items}")
+            for inv_summary in inv_list:
+                inv_id   = str(inv_summary["id"])
+                inv_type = int(inv_summary.get("type", -1))
+                inv_no   = inv_summary.get("no","")
+                inv_date_str = inv_summary.get("date","")
+                try:
+                    inv_date = datetime.fromisoformat(inv_date_str)
+                except:
+                    continue
+                # فلترة حسب النوع والتاريخ
+                if inv_type != 0 or inv_date <= last_sync:
+                    continue
+
+                # 2) جلب تفاصيل الفاتورة
+                url_det = f"{DAFTRA_URL}/v2/api/entity/invoice/{inv_id}"
+                det = fetch_with_retry(url_det, DAFTRA_HEADERS)
+                if not det:
+                    continue
+
+                # 3) استخراج البنود
+                items = det.get("invoice_item") or []
+                if not isinstance(items, list):
+                    items = [items]
+                if len(items) == 0:
+                    logger.error(f"❌ فاتورة {inv_id} بدون بنود → تخطّي")
+                    continue
+                logger.info(f"✅ فاتورة {inv_id} تحتوي {len(items)} بنود")
+
+                # 4) حفظ الفاتورة في Supabase
+                inv_uuid = generate_uuid_from_number(inv_id)
+                total_amount = safe_float(det.get("summary_total"))
+                payload_inv = {
+                    "id":             inv_uuid,
+                    "created_at":     inv_date_str,
+                    "invoice_type":   inv_type,
+                    "branch":         branch_id,
+                    "store":          inv_summary.get("store_id", branch_id),
+                    "invoice_no":     inv_no,
+                    "total":          total_amount
+                }
+                if upsert("invoices", payload_inv):
+                    inserted_invoices += 1
+
+                    # 5) حفظ البنود في Supabase
+                    for it in items:
+                        item_uuid = generate_uuid_from_number(f"{it.get('id')}-{inv_id}")
+                        payload_it = {
+                            "id":          item_uuid,
+                            "invoice_id":  inv_uuid,
+                            "product_id":  it.get("product_id",""),
+                            "quantity":    safe_float(it.get("quantity")),
+                            "unit_price":  safe_float(it.get("unit_price", it.get("price"))),
+                            "total_price": safe_float(it.get("quantity")) 
+                                           * safe_float(it.get("unit_price", it.get("price")))
+                        }
+                        if upsert("invoice_items", payload_it):
+                            inserted_items += 1
+
+            if len(inv_list) < limit:
+                break
+            page += 1
+
+    # تحديث وقت التزامن
+    update_sync_time("sales_invoices", datetime.now().isoformat())
+    logger.info(f"🎉 انتهى التزامن: فواتير {inserted_invoices}, بنود {inserted_items}")
 
 if __name__ == "__main__":
-    sync_invoices()
+    sync_invoices_to_supabase()
