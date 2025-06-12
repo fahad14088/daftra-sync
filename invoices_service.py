@@ -19,7 +19,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 def generate_uuid_from_number(number):
-    hash_input = f"invoice-{number}".encode('utf-8')
+    hash_input = f"invoice-{number}".encode("utf-8")
     hash_digest = hashlib.md5(hash_input).hexdigest()
     return f"{hash_digest[:8]}-{hash_digest[8:12]}-{hash_digest[12:16]}-{hash_digest[16:20]}-{hash_digest[20:32]}"
 
@@ -68,7 +68,7 @@ def get_all_invoices_complete():
                 response = requests.get(url, headers=headers, timeout=30)
                 
                 if response.status_code != 200:
-                    logger.error(f"❌ خطأ في الفرع {store_id}, الصفحة {page}: {response.text}")
+                    logger.error(f"❌ خطأ في الفرع {store_id}, الصفحة {page}: {response.text}", exc_info=True)
                     break
                 
                 data = response.json()
@@ -194,7 +194,7 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
             logger.info(f"✅ تم حفظ الفاتورة {invoice_id}")
             return invoice_uuid
         else:
-            logger.error(f"❌ فشل حفظ الفاتورة {invoice_id}: {response.text}")
+            logger.error(f"❌ فشل حفظ الفاتورة {invoice_id}: {response.text}", exc_info=True)
             return None
             
     except Exception as e:
@@ -260,7 +260,7 @@ def save_invoice_items_complete(invoice_uuid, invoice_id, items):
             if response.status_code in [200, 201, 409]:
                 saved_count += 1
             else:
-                logger.error(f"❌ فشل حفظ البند {i} للفاتورة {invoice_id}: {response.text}")
+                logger.error(f"❌ فشل حفظ البند {i} للفاتورة {invoice_id}: {response.text}", exc_info=True)
                 
         except Exception as e:
             logger.error(f"❌ خطأ في البند {i} للفاتورة {invoice_id}: {e}", exc_info=True)
@@ -325,12 +325,12 @@ def sync_invoices():
         logger.info("=" * 80)
         logger.info("🎯 النتائج النهائية:")
         logger.info(f"📊 إجمالي الفواتير التي تم جلبها: {len(all_invoices)}")
-        logger.info(f"✅ فواتير محفوظة بنجاح: {result['invoices']}")
-        logger.info(f"📦 بنود محفوظة بنجاح: {result['items']}")
-        logger.info(f"❌ عدد الأخطاء التي حدثت: {len(result['errors'])}")
+        logger.info(f"✅ فواتير محفوظة بنجاح: {result["invoices"]}")
+        logger.info(f"📦 بنود محفوظة بنجاح: {result["items"]}")
+        logger.info(f"❌ عدد الأخطاء التي حدثت: {len(result["errors"])}")
         
         if len(all_invoices) > 0:
-            success_rate = (result['invoices'] / len(all_invoices)) * 100
+            success_rate = (result["invoices"] / len(all_invoices)) * 100
             logger.info(f"🏆 معدل نجاح حفظ الفواتير: {success_rate:.1f}%")
         
         if result["invoices"] > 0:
