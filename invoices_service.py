@@ -8,7 +8,8 @@ import hashlib
 import json
 import traceback
 
-logging.basicConfig(level=logging.INFO, format=\'%(asctime)s - %(message)s\')
+# تم تصحيح هذا السطر
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # المتغيرات
@@ -18,7 +19,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 def generate_uuid_from_number(number):
-    hash_input = f"invoice-{number}".encode(\'utf-8\')
+    hash_input = f"invoice-{number}".encode('utf-8')
     hash_digest = hashlib.md5(hash_input).hexdigest()
     return f"{hash_digest[:8]}-{hash_digest[8:12]}-{hash_digest[12:16]}-{hash_digest[16:20]}-{hash_digest[20:32]}"
 
@@ -29,7 +30,7 @@ def safe_float(value, default=0.0):
             return default
         return float(str(value).replace(",", ""))
     except Exception as e:
-        logger.error(f"❌ خطأ في تحويل القيمة \'{value}\' إلى رقم: {e}", exc_info=True)
+        logger.error(f"❌ خطأ في تحويل القيمة '{value}' إلى رقم: {e}", exc_info=True)
         return default
 
 def safe_string(value, max_length=None):
@@ -42,7 +43,7 @@ def safe_string(value, max_length=None):
             result = result[:max_length]
         return result
     except Exception as e:
-        logger.error(f"❌ خطأ في تحويل القيمة \'{value}\' إلى نص: {e}", exc_info=True)
+        logger.error(f"❌ خطأ في تحويل القيمة '{value}' إلى نص: {e}", exc_info=True)
         return ""
 
 def get_all_invoices_complete():
@@ -180,7 +181,7 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
         # تنظيف البيانات
         clean_payload = {k: v for k, v in payload.items() if v not in [None, "", "None"]}
         
-        logger.info(f"💾 حفظ الفاتورة {invoice_id} - المبلغ: {clean_payload.get(\'total\', 0)}")
+        logger.info(f"💾 حفظ الفاتورة {invoice_id} - المبلغ: {clean_payload.get('total', 0)}")
         
         response = requests.post(
             f"{SUPABASE_URL}/rest/v1/invoices",
@@ -197,7 +198,7 @@ def save_invoice_complete(invoice_summary, invoice_details=None):
             return None
             
     except Exception as e:
-        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_summary.get(\'id\')}: {e}", exc_info=True)
+        logger.error(f"❌ خطأ في حفظ الفاتورة {invoice_summary.get('id')}: {e}", exc_info=True)
         return None
 
 def save_invoice_items_complete(invoice_uuid, invoice_id, items):
@@ -316,7 +317,7 @@ def sync_invoices():
                     time.sleep(2)
                 
             except Exception as e:
-                error_msg = f"خطأ في معالجة الفاتورة {invoice.get(\'id\')}: {e}"
+                error_msg = f"خطأ في معالجة الفاتورة {invoice.get('id')}: {e}"
                 result["errors"].append(error_msg)
                 logger.error(f"❌ {error_msg}", exc_info=True)
         
@@ -324,12 +325,12 @@ def sync_invoices():
         logger.info("=" * 80)
         logger.info("🎯 النتائج النهائية:")
         logger.info(f"📊 إجمالي الفواتير التي تم جلبها: {len(all_invoices)}")
-        logger.info(f"✅ فواتير محفوظة بنجاح: {result[\'invoices\]}")
-        logger.info(f"📦 بنود محفوظة بنجاح: {result[\'items\]}")
-        logger.info(f"❌ عدد الأخطاء التي حدثت: {len(result[\'errors\])}")
+        logger.info(f"✅ فواتير محفوظة بنجاح: {result['invoices']}")
+        logger.info(f"📦 بنود محفوظة بنجاح: {result['items']}")
+        logger.info(f"❌ عدد الأخطاء التي حدثت: {len(result['errors'])}")
         
         if len(all_invoices) > 0:
-            success_rate = (result[\'invoices\] / len(all_invoices)) * 100
+            success_rate = (result['invoices'] / len(all_invoices)) * 100
             logger.info(f"🏆 معدل نجاح حفظ الفواتير: {success_rate:.1f}%")
         
         if result["invoices"] > 0:
