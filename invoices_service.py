@@ -419,8 +419,12 @@ def sync_invoices():
                     logger.warning(f"⚠️ لم يتم جلب تفاصيل الفاتورة {invoice_id}. تخطي.")
                     continue
 
+                # دمج بيانات الفاتورة الأساسية مع التفاصيل الكاملة
+                full_invoice_data = invoice.copy()
+                full_invoice_data.update(details)
+
                 # حفظ الفاتورة (مع أو بدون تفاصيل)
-                invoice_uuid = save_invoice_complete(invoice, details)
+                invoice_uuid = save_invoice_complete(full_invoice_data)
                 
                 if invoice_uuid:
                     result["invoices"] += 1
