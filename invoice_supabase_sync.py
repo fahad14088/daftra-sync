@@ -2,7 +2,7 @@ import time
 import requests
 import logging
 import os
-import uuid
+
 from config import BASE_URL, BRANCH_IDS, PAGE_LIMIT, EXPECTED_TYPE, HEADERS_DAFTRA, HEADERS_SUPABASE, SUPABASE_URL
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -20,6 +20,11 @@ def fetch_with_retry(url, headers, params=None, retries=3, delay=2):
             logger.warning(f"⚠️ محاولة {attempt+1} فشلت: {str(e)}")
         time.sleep(delay)
     return None
+
+def fetch_invoice_details(invoice_id):
+    url = f"{BASE_URL}/v2/api/entity/invoice/view/{invoice_id}"
+    data = fetch_with_retry(url, HEADERS_DAFTRA)
+    return data.get("data", {}).get("Invoice", {})
 
 def fetch_all():
     all_invoices = []
@@ -45,36 +50,39 @@ def fetch_all():
 
             valid_items = [inv for inv in items if int(inv.get("type", -1)) == EXPECTED_TYPE]
             logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(valid_items)} فاتورة")
-            if not valid_items:
-                break
 
-            for inv in valid_items:
-                inv_id = str(inv["id"])
+            for raw_inv in valid_items:
+                inv_id = raw_inv["id"]
+                inv = fetch_invoice_details(inv_id)
+                if not inv:
+                    continue
+
                 all_invoices.append({
-                    "id": inv_id,
+                    "id": str(inv["id"]),
                     "invoice_no": inv.get("no"),
                     "invoice_date": inv.get("date"),
                     "created_at": inv.get("created_at"),
-                    "customer_id": str(inv.get("contact_id")) if inv.get("contact_id") else None,
-                    "branch": inv.get("branch_id"),
+                    "customer_id": inv.get("contact_id"),
                     "total": inv.get("total", 0),
-                    "client_id": str(inv.get("contact_id")) if inv.get("contact_id") else None,
-                    "client_business_name": inv.get("Contact", {}).get("business_name"),
-                    "client_city": inv.get("Contact", {}).get("city"),
-                    "summary_paid": inv.get("summary", {}).get("paid"),
-                    "summary_unpaid": inv.get("summary", {}).get("unpaid")
+                    "branch": inv.get("branch_id"),
+                    "client_id": inv.get("client_id"),
+                    "client_business_name": inv.get("client_business_name"),
+                    "client_city": inv.get("client_city"),
+                    "summary_paid": inv.get("summary_paid", 0),
+                    "summary_unpaid": inv.get("summary_unpaid", 0),
                 })
 
                 for item in inv.get("InvoiceItem", []):
                     all_items.append({
-                        "id": str(uuid.uuid4()),
-                        "invoice_id": inv_id,
+                        "id": str(item.get("id") or f"{inv['id']}-{item.get('product_id')}"),
+                        "invoice_id": str(inv["id"]),
                         "product_id": str(item.get("product_id")),
                         "product_code": item.get("product_code"),
-                        "client_business_name": inv.get("Contact", {}).get("business_name"),
+                        "description": item.get("description"),
                         "quantity": item.get("quantity", 0),
                         "unit_price": item.get("unit_price", 0),
-                        "total_price": item.get("total", 0)
+                        "total_price": item.get("total", 0),
+                        "client_business_name": inv.get("client_business_name"),
                     })
 
             if len(items) < 10:
@@ -86,23 +94,20 @@ def fetch_all():
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(all_invoices)}")
 
+    # حفظ في Supabase
     if all_invoices:
-        for i in range(0, len(all_invoices), 500):
-            chunk = all_invoices[i:i+500]
-            requests.post(
-                f"{SUPABASE_URL}/rest/v1/invoices",
-                headers=HEADERS_SUPABASE,
-                json=chunk
-            )
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/invoices",
+            headers=HEADERS_SUPABASE,
+            json=all_invoices
+        )
 
     if all_items:
-        for i in range(0, len(all_items), 500):
-            chunk = all_items[i:i+500]
-            requests.post(
-                f"{SUPABASE_URL}/rest/v1/invoice_items",
-                headers=HEADERS_SUPABASE,
-                json=chunk
-            )
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/invoice_items",
+            headers=HEADERS_SUPABASE,
+            json=all_items
+        )
 
     logger.info(f"✅ تم حفظ {len(all_invoices)} فاتورة مبيعات جديدة.")
     logger.info(f"✅ الفواتير: {len(all_invoices)} فاتورة، {len(all_items)} بند")
