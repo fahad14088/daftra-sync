@@ -2,7 +2,6 @@ import os
 import requests
 import time
 from datetime import datetime
-from sync_utils import get_last_sync_time, update_sync_time
 from config import BASE_URL, HEADERS
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -18,6 +17,13 @@ HEADERS_SUPABASE = {
 EXPECTED_TYPE = 0
 PAGE_LIMIT = 20
 BRANCH_IDS = [1, 2]
+
+# ✅ بديل مؤقت لـ sync_utils
+def get_last_sync_time(_):
+    return "2000-01-01T00:00:00"
+
+def update_sync_time(_, __):
+    pass
 
 def safe_float(val, default=0.0):
     try:
