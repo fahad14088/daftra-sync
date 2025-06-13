@@ -1,16 +1,19 @@
 import os
 import requests
 import time
-from datetime import datetime
+import logging
 
-# إعداد الاتصال بدفترة
-BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com")
+# إعدادات التسجيل
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+# المتغيرات البيئية
+BASE_URL = os.getenv("DAFTRA_URL")
 API_KEY = os.getenv("DAFTRA_APIKEY")
-HEADERS = {"apikey": API_KEY}
-
-# إعداد الاتصال بـ Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+HEADERS_DAFTRA = {"apikey": API_KEY}
 HEADERS_SUPABASE = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -18,16 +21,9 @@ HEADERS_SUPABASE = {
     "Prefer": "resolution=merge-duplicates"
 }
 
-EXPECTED_TYPE = 0
-PAGE_LIMIT = 20
-BRANCH_IDS = [1, 2]
-
-# بديل مؤقت لتاريخ التزامن
-def get_last_sync_time(_):
-    return "2000-01-01T00:00:00"
-
-def update_sync_time(_, __):
-    pass
+EXPECTED_TYPE = 0  # نوع فاتورة مبيعات
+PAGE_LIMIT = 100
+BRANCH_IDS = [1, 2, 3]
 
 def safe_float(val, default=0.0):
     try:
@@ -35,116 +31,116 @@ def safe_float(val, default=0.0):
     except:
         return default
 
-def fetch_with_retry(url, headers, max_retries=3, timeout=30):
-    for retry in range(max_retries):
+def safe_string(val, length=None):
+    s = "" if val is None else str(val).strip()
+    return s[:length] if length and len(s) > length else s
+
+def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
+    for attempt in range(1, max_retries + 1):
         try:
-            response = requests.get(url, headers=headers, timeout=timeout)
-            if response.status_code == 200:
-                return response.json()
-            time.sleep((retry + 1) * 2)
-        except:
-            time.sleep((retry + 1) * 2)
+            resp = requests.get(url, headers=headers, params=params, timeout=timeout)
+            if resp.status_code == 200:
+                return resp.json()
+            logger.warning(f"محاولة {attempt} - كود الاستجابة {resp.status_code}: {resp.text}")
+        except Exception as e:
+            logger.error(f"محاولة {attempt} فشلت: {e}")
+        time.sleep(attempt * 2)
     return None
 
-def fetch_all():
-    inserted = 0
-    item_count = 0
-    last_date_str = get_last_sync_time("sales_invoices")
-    try:
-        last_date = datetime.fromisoformat(last_date_str)
-    except:
-        last_date = datetime(2000, 1, 1)
+def get_all_invoices():
+    invoices = []
 
-    for branch_id in BRANCH_IDS:
+    for branch in BRANCH_IDS:
         page = 1
         while True:
-            url = f"{BASE_URL}v2/api/entity/invoice/list/1?filter[branch_id]={branch_id}&page={page}&limit={PAGE_LIMIT}"
-            data = fetch_with_retry(url, HEADERS)
-            if data is None:
+            url = f"{BASE_URL}/v2/api/entity/invoice/list/1"
+            params = {
+                "filter[branch_id]": branch,
+                "page": page,
+                "limit": PAGE_LIMIT
+            }
+            data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
+            if not data:
+                logger.error(f"❌ فشل جلب الفواتير للفرع {branch} الصفحة {page}")
                 break
 
-            invoice_list = data.get("data", [])
-            if not invoice_list:
+            items = data.get("data") or []
+            if not items:
                 break
 
-            has_new_invoices = False
+            for inv in items:
+                inv_type = int(inv.get("type", -1))
+                if inv_type == EXPECTED_TYPE:
+                    invoices.append(inv)
 
-            for invoice in invoice_list:
-                inv_id = invoice.get("id")
-                inv_no = invoice.get("no", "بدون رقم")
-                inv_date = invoice.get("date")
-                inv_type = invoice.get("type")
-                store_id = invoice.get("store_id")
-
-                try:
-                    inv_type = int(inv_type)
-                    created_at = datetime.strptime(inv_date, "%Y-%m-%d")
-                except:
-                    continue
-
-                if inv_type != EXPECTED_TYPE or created_at <= last_date:
-                    continue
-
-                has_new_invoices = True
-
-                url_details = f"{BASE_URL}v2/api/entity/invoice/{inv_id}"
-                inv_details = fetch_with_retry(url_details, HEADERS)
-                if inv_details is None:
-                    continue
-
-                items = inv_details.get("invoice_item", [])
-                if not isinstance(items, list):
-                    items = [items] if items else []
-
-                total_amount = safe_float(inv_details.get("summary_total"))
-
-                # حفظ الفاتورة في Supabase
-                payload = {
-                    "id": str(inv_id),
-                    "invoice_no": inv_no,
-                    "invoice_date": inv_date,
-                    "invoice_type": EXPECTED_TYPE,
-                    "branch": str(branch_id),
-                    "store": str(store_id or "unknown"),
-                    "total": total_amount
-                }
-                resp = requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
-                if resp.status_code >= 300:
-                    print(f"❌ فشل حفظ الفاتورة {inv_id}: {resp.text}")
-                else:
-                    print(f"✅ تم حفظ الفاتورة {inv_id}")
-
-                # حذف البنود القديمة
-                requests.delete(f"{SUPABASE_URL}/rest/v1/invoice_items?invoice_id=eq.{inv_id}", headers=HEADERS_SUPABASE)
-
-                # حفظ البنود
-                for item in items:
-                    product_id = item.get("product_id")
-                    quantity = safe_float(item.get("quantity"))
-                    unit_price = safe_float(item.get("unit_price"))
-                    if product_id and quantity > 0:
-                        item_payload = {
-                            "id": f"{inv_id}-{item.get('id')}",
-                            "invoice_id": str(inv_id),
-                            "product_id": str(product_id),
-                            "quantity": quantity,
-                            "unit_price": unit_price,
-                            "total_price": quantity * unit_price
-                        }
-                        item_resp = requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SUPABASE, json=item_payload)
-                        if item_resp.status_code >= 300:
-                            print(f"❌ فشل حفظ البند {inv_id}-{item.get('id')}: {item_resp.text}")
-                        else:
-                            print(f"🟢 تم حفظ البند {inv_id}-{item.get('id')}")
-                            item_count += 1
-
-                inserted += 1
-
-            if not has_new_invoices or len(invoice_list) < PAGE_LIMIT:
+            if len(items) < PAGE_LIMIT:
                 break
             page += 1
             time.sleep(1)
 
-    update_sync_time("sales_invoices", datetime.now().isoformat())
-    print(f"\n✅ تم حفظ {inserted} فاتورة مبيعات جديدة.")
-    return {"invoices": inserted, "items": item_count}
+    logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(invoices)}")
+    return invoices
+
+def get_invoice_details(inv_id):
+    url = f"{BASE_URL}/v2/api/entity/invoice/{inv_id}"
+    data = fetch_with_retry(url, HEADERS_DAFTRA)
+    return data or {}
+
+def save_invoice_and_items(inv):
+    inv_id = str(inv.get("id"))
+    details = get_invoice_details(inv_id)
+    full = {**inv, **details}
+
+    payload = {
+        "id": inv_id,
+        "invoice_no": safe_string(full.get("no")),
+        "invoice_date": safe_string(full.get("date")),
+        "total": safe_float(full.get("summary_total")),
+        "summary_paid": safe_float(full.get("summary_paid")),
+        "summary_unpaid": safe_float(full.get("summary_unpaid")),
+        "branch": full.get("branch_id"),
+        "client_business_name": safe_string(full.get("client_business_name"), 255),
+        "client_city": safe_string(full.get("client_city"))
+    }
+    r1 = requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
+
+    items = full.get("invoice_item") or []
+    count = 0
+    for itm in (items if isinstance(items, list) else [items]):
+        qty = safe_float(itm.get("quantity"))
+        if qty <= 0:
+            continue
+        item_payload = {
+            "id": f"{inv_id}-{itm.get('id')}",
+            "invoice_id": inv_id,
+            "product_id": safe_string(itm.get("product_id")),
+            "product_code": safe_string(itm.get("product_code")),
+            "quantity": qty,
+            "unit_price": safe_float(itm.get("unit_price")),
+            "total_price": qty * safe_float(itm.get("unit_price"))
+        }
+        requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SUPABASE, json=item_payload)
+        count += 1
+
+    return True, count
+
+def fetch_all():
+    invoices = get_all_invoices()
+    count_saved = 0
+    count_items = 0
+
+    for inv in invoices:
+        saved, item_count = save_invoice_and_items(inv)
+        if saved:
+            count_saved += 1
+            count_items += item_count
+        time.sleep(0.3)
+
+    logger.info(f"✅ تم حفظ {count_saved} فاتورة مبيعات جديدة.")
+    return {
+        "invoices": count_saved,
+        "items": count_items
+    }
+
+if __name__ == "__main__":
+    fetch_all()
