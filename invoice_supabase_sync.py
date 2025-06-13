@@ -7,7 +7,6 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# المتغيرات البيئية
 BASE_URL = os.getenv("DAFTRA_URL")
 API_KEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -21,8 +20,8 @@ HEADERS_SUPABASE = {
     "Prefer": "resolution=merge-duplicates"
 }
 
-EXPECTED_TYPE = 0  # نوع فاتورة مبيعات
-PAGE_LIMIT = 100
+EXPECTED_TYPE = 0
+PAGE_LIMIT = 20
 BRANCH_IDS = [1, 2, 3]
 
 def safe_float(val, default=0.0):
@@ -41,10 +40,10 @@ def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
             resp = requests.get(url, headers=headers, params=params, timeout=timeout)
             if resp.status_code == 200:
                 return resp.json()
-            logger.warning(f"محاولة {attempt} - كود الاستجابة {resp.status_code}: {resp.text}")
+            logger.warning(f"محاولة {attempt} - كود {resp.status_code}: {resp.text}")
         except Exception as e:
             logger.error(f"محاولة {attempt} فشلت: {e}")
-        time.sleep(attempt * 2)
+        time.sleep(2)
     return None
 
 def get_all_invoices():
@@ -59,26 +58,25 @@ def get_all_invoices():
                 "limit": PAGE_LIMIT
             }
             data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
-
             if data is None:
-                logger.warning(f"⚠️ فشل جلب الصفحة {page} للفرع {branch}، تجاوزها...")
-                page += 1
-                continue
+                logger.warning(f"⚠️ الصفحة {page} للفرع {branch} فشلت، نكمل...")
+                break
 
-            items = data.get("data") or []
+            items = data.get("data", [])
             if not isinstance(items, list):
                 items = [items]
+
+            if not items:
+                break
 
             valid_items = [inv for inv in items if int(inv.get("type", -1)) == EXPECTED_TYPE]
             invoices.extend(valid_items)
 
             logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(items)} فاتورة")
-
             if len(items) < PAGE_LIMIT:
                 break
             page += 1
             time.sleep(1)
-
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(invoices)}")
     return invoices
 
@@ -103,7 +101,10 @@ def save_invoice_and_items(inv):
         "client_business_name": safe_string(full.get("client_business_name"), 255),
         "client_city": safe_string(full.get("client_city"))
     }
-    requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
+    r1 = requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
+    if not r1.ok:
+        logger.error(f"❌ فشل حفظ الفاتورة {inv_id}: {r1.text}")
+        return False, 0
 
     items = full.get("invoice_item") or []
     count = 0
@@ -120,9 +121,11 @@ def save_invoice_and_items(inv):
             "unit_price": safe_float(itm.get("unit_price")),
             "total_price": qty * safe_float(itm.get("unit_price"))
         }
-        requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SUPABASE, json=item_payload)
-        count += 1
-
+        r2 = requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SUPABASE, json=item_payload)
+        if r2.ok:
+            count += 1
+        else:
+            logger.warning(f"⚠️ فشل حفظ البند {itm.get('id')} للفاتورة {inv_id}: {r2.text}")
     return True, count
 
 def fetch_all():
@@ -135,7 +138,7 @@ def fetch_all():
         if saved:
             count_saved += 1
             count_items += item_count
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     logger.info(f"✅ تم حفظ {count_saved} فاتورة مبيعات جديدة.")
     return {
