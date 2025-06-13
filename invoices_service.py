@@ -9,72 +9,78 @@ import hashlib
 # ----------------------------------------
 # إعداد الـ logging
 # ----------------------------------------
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------
-# متغيرات البيئة و HEADERS
+# متغيرات البيئة
 # ----------------------------------------
-DAFTRA_URL    = os.getenv("DAFTRA_URL")
-DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
-SUPABASE_URL  = os.getenv("SUPABASE_URL")
-SUPABASE_KEY  = os.getenv("SUPABASE_KEY")
+BASE_URL         = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com")
+DAFTRA_APIKEY    = os.getenv("DAFTRA_APIKEY")
+SUPABASE_URL     = os.getenv("SUPABASE_URL")
+SUPABASE_KEY     = os.getenv("SUPABASE_KEY")
 
-DAFTRA_HEADERS = {"apikey": DAFTRA_APIKEY}
+HEADERS_DAFTRA   = {"apikey": DAFTRA_APIKEY}
+HEADERS_SUPABASE = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 # ----------------------------------------
 # دوال مساعدة
 # ----------------------------------------
+
 def generate_uuid_from_number(number: str) -> str:
-    """توليد UUID ثابت من رقم الفاتورة."""
-    digest = hashlib.md5(f"invoice-{number}".encode("utf-8")).hexdigest()
+    digest = hashlib.md5(f"invoice-{number}".encode()).hexdigest()
     return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
+
 
 def safe_float(val, default=0.0):
     try:
         return float(str(val).replace(",", "")) if val not in (None, "") else default
-    except:
+    except Exception:
         return default
+
 
 def safe_string(val, length=None):
     s = "" if val is None else str(val).strip()
     return s[:length] if length and len(s) > length else s
 
+
 def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
     for attempt in range(1, max_retries + 1):
         try:
             resp = requests.get(url, headers=headers, params=params, timeout=timeout)
+            logger.debug(f"Request URL: {resp.request.url}")
+            logger.debug(f"Status: {resp.status_code}")
+            logger.debug(f"Headers: {resp.headers}")
             if resp.status_code == 200:
                 return resp.json()
-            logger.warning(f"🔸 Response {resp.status_code}: {resp.text}")
+            logger.warning(f"Attempt {attempt} - unexpected status {resp.status_code}: {resp.text}")
         except Exception as e:
-            logger.warning(f"🔸 Attempt {attempt} failed: {e}")
+            logger.error(f"Attempt {attempt} failed: {e}")
         time.sleep(attempt * 2)
     return None
 
+# ----------------------------------------
+# فحص وجود الفاتورة لتجنب التكرار
+# ----------------------------------------
 def check_invoice_exists(invoice_id: str) -> bool:
-    """
-    فحص وجود الفاتورة في Supabase بطلب HEAD يقتصر على عمود id
-    باستخدام select=id و Prefer: count=exact لتجنب JOINs الزائدة.
-    """
     inv_uuid = generate_uuid_from_number(invoice_id)
     url = f"{SUPABASE_URL}/rest/v1/invoices"
-    params = {"select": "id", "id": f"eq.{inv_uuid}"}
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Prefer": "count=exact"
-    }
-    resp = requests.head(url, headers=headers, params=params, timeout=30)
-    if resp.status_code == 200:
-        cr = resp.headers.get("Content-Range", "")
-        total = int(cr.split("/")[-1]) if "/" in cr else 0
-        return total > 0
-    logger.warning(f"❌ Supabase HEAD failed ({resp.status_code}): {resp.text}")
+    params = {"select": "id", "id": f"eq.{inv_uuid}", "limit": 1}
+    try:
+        resp = requests.get(url, headers={**HEADERS_SUPABASE, "Prefer": "count=exact"}, params=params, timeout=30)
+        logger.debug(f"Check URL: {resp.request.url}")
+        logger.debug(f"Check Headers: {resp.headers}")
+        if resp.status_code == 200:
+            cr = resp.headers.get("Content-Range", "")
+            total = int(cr.split("/")[-1]) if "/" in cr else 0
+            return total > 0
+        logger.warning(f"Check failed {resp.status_code}: {resp.text}")
+    except Exception as e:
+        logger.error(f"Error checking invoice exists: {e}")
     return False
 
 # ----------------------------------------
-# جلب الفواتير
+# جلب جميع الفواتير
 # ----------------------------------------
 def get_all_invoices_complete():
     all_invoices = []
@@ -84,73 +90,55 @@ def get_all_invoices_complete():
     for branch in branch_ids:
         page = 1
         while True:
-            url = f"{DAFTRA_URL}/v2/api/entity/invoice/list"
-            params = {
-                "filter[branch_id]": branch,
-                "page": page,
-                "limit": 100,
-                "sort[id]": "desc"
-            }
-            data = fetch_with_retry(url, DAFTRA_HEADERS, params=params)
-            if not data:
-                logger.error(f"❌ Failed to fetch branch {branch} page {page}")
+            url = f"{BASE_URL}/v2/api/entity/invoice/list/1"
+            params = {"filter[branch_id]": branch, "page": page, "limit": 100}
+            data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
+            if data is None:
+                logger.error(f"Failed to fetch invoices for branch {branch}, page {page}")
                 break
-
             invoices = data.get("data") or []
             if not invoices:
                 break
-
             for inv in invoices:
-                inv_id = str(inv.get("id", ""))
+                inv_id = str(inv.get("id"))
                 if inv_id in seen or check_invoice_exists(inv_id):
                     seen.add(inv_id)
                     continue
                 all_invoices.append(inv)
                 seen.add(inv_id)
-
             if len(invoices) < 100:
                 break
             page += 1
             time.sleep(1)
-
-    logger.info(f"📋 Total invoices to process: {len(all_invoices)}")
+    logger.info(f"Total to process: {len(all_invoices)}")
     return all_invoices
 
 # ----------------------------------------
-# جلب تفاصيل الفاتورة
+# جلب تفاصيل فاتورة
 # ----------------------------------------
 def get_invoice_full_details(invoice_id: str):
-    url = f"{DAFTRA_URL}/v2/api/entity/invoice/{invoice_id}"
-    return fetch_with_retry(url, DAFTRA_HEADERS) or {}
+    url = f"{BASE_URL}/v2/api/entity/invoice/{invoice_id}"
+    return fetch_with_retry(url, HEADERS_DAFTRA) or {}
 
 # ----------------------------------------
-# حفظ بيانات الفاتورة
+# حفظ فاتورة
 # ----------------------------------------
 def save_invoice_complete(inv: dict) -> bool:
-    inv_id = str(inv.get("id", ""))
+    inv_id = str(inv.get("id"))
     inv_uuid = generate_uuid_from_number(inv_id)
     payload = {
         "id": inv_uuid,
-        "invoice_no": safe_string(inv.get("no", "")),
-        "invoice_date": safe_string(inv.get("date", "")),
+        "invoice_no": safe_string(inv.get("no")),
+        "invoice_date": safe_string(inv.get("date")),
         "total": safe_float(inv.get("summary_total")),
         "summary_paid": safe_float(inv.get("summary_paid")),
         "summary_unpaid": safe_float(inv.get("summary_unpaid")),
         "branch": inv.get("branch_id"),
-        "client_business_name": safe_string(inv.get("client_business_name", ""), 255),
-        "client_city": safe_string(inv.get("client_city", ""))
+        "client_business_name": safe_string(inv.get("client_business_name"), 255),
+        "client_city": safe_string(inv.get("client_city"))
     }
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json"
-    }
-    resp = requests.post(
-        f"{SUPABASE_URL}/rest/v1/invoices",
-        headers=headers,
-        json=payload,
-        timeout=30
-    )
+    resp = requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
+    logger.debug(f"Save invoice status: {resp.status_code}, text: {resp.text}")
     return resp.status_code in (200, 201, 409)
 
 # ----------------------------------------
@@ -158,32 +146,19 @@ def save_invoice_complete(inv: dict) -> bool:
 # ----------------------------------------
 def save_invoice_items(inv_uuid: str, invoice_id: str, items) -> int:
     count = 0
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json"
-    }
     for itm in (items if isinstance(items, list) else [items]):
         qty = safe_float(itm.get("quantity"))
         if qty <= 0:
             continue
         unit = safe_float(itm.get("unit_price"))
         item_uuid = generate_uuid_from_number(f"item-{itm.get('id')}-{invoice_id}")
-        payload = {
-            "id": item_uuid,
-            "invoice_id": inv_uuid,
-            "product_id": safe_string(itm.get("product_id")),
-            "product_code": safe_string(itm.get("product_code")),
-            "quantity": qty,
-            "unit_price": unit,
-            "total_price": qty * unit
-        }
-        resp = requests.post(
-            f"{SUPABASE_URL}/rest/v1/invoice_items",
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
+        payload = {"id": item_uuid, "invoice_id": inv_uuid,
+                   "product_id": safe_string(itm.get("product_id")),
+                   "product_code": safe_string(itm.get("product_code")),
+                   "quantity": qty, "unit_price": unit,
+                   "total_price": qty * unit}
+        resp = requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SUPABASE, json=payload)
+        logger.debug(f"Save item status: {resp.status_code}, text: {resp.text}")
         if resp.status_code in (200, 201, 409):
             count += 1
     return count
@@ -195,20 +170,16 @@ def sync_invoices():
     logger.info("🚀 Starting sync...")
     invoices = get_all_invoices_complete()
     saved = 0
-
     for inv in invoices:
-        inv_id = str(inv.get("id", ""))
+        inv_id = str(inv.get("id"))
         details = get_invoice_full_details(inv_id)
         full = {**inv, **details}
         if save_invoice_complete(full):
             saved += 1
             inv_uuid = generate_uuid_from_number(inv_id)
-            items = details.get("invoice_item", [])
-            save_invoice_items(inv_uuid, inv_id, items)
+            save_invoice_items(inv_uuid, inv_id, full.get("invoice_item", []))
         time.sleep(0.2)
-
-    logger.info(f"✅ Sync complete: {saved}/{len(invoices)} invoices saved.")
-    return {"processed": len(invoices), "saved": saved}
+    logger.info(f"✅ Sync complete: {saved}/{len(invoices)} saved.")
 
 if __name__ == "__main__":
     sync_invoices()
