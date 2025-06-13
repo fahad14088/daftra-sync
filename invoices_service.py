@@ -20,7 +20,6 @@ DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL  = os.getenv("SUPABASE_URL")
 SUPABASE_KEY  = os.getenv("SUPABASE_KEY")
 
-# نستخدم هذا الهيدر لجميع طلبات DaFtra
 DAFTRA_HEADERS = {"apikey": DAFTRA_APIKEY}
 
 # ----------------------------------------
@@ -32,19 +31,16 @@ def generate_uuid_from_number(number: str) -> str:
     return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
 
 def safe_float(val, default=0.0):
-    """تحويل آمن إلى float."""
     try:
         return float(str(val).replace(",", "")) if val not in (None, "") else default
     except:
         return default
 
 def safe_string(val, length=None):
-    """تحويل آمن إلى str مع تقليم الطول."""
     s = "" if val is None else str(val).strip()
     return s[:length] if length and len(s) > length else s
 
 def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
-    """GET مع إعادة المحاولة."""
     for attempt in range(1, max_retries + 1):
         try:
             resp = requests.get(url, headers=headers, params=params, timeout=timeout)
@@ -58,26 +54,23 @@ def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
 
 def check_invoice_exists(invoice_id: str) -> bool:
     """
-    فحص وجود الفاتورة في Supabase بطلب GET يقتصر على عمود id.
-    نتجنب الـ JOINات الزائدة بوضع select=id و Prefer: count=exact.
+    فحص وجود الفاتورة في Supabase بطلب HEAD يقتصر على عمود id
+    باستخدام select=id و Prefer: count=exact لتجنب JOINs الزائدة.
     """
     inv_uuid = generate_uuid_from_number(invoice_id)
     url = f"{SUPABASE_URL}/rest/v1/invoices"
-    params = {
-        "select": "id",
-        "id": f"eq.{inv_uuid}"
-    }
+    params = {"select": "id", "id": f"eq.{inv_uuid}"}
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Prefer": "count=exact"
     }
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    resp = requests.head(url, headers=headers, params=params, timeout=30)
     if resp.status_code == 200:
         cr = resp.headers.get("Content-Range", "")
         total = int(cr.split("/")[-1]) if "/" in cr else 0
         return total > 0
-    logger.warning(f"❌ Supabase count failed ({resp.status_code}): {resp.text}")
+    logger.warning(f"❌ Supabase HEAD failed ({resp.status_code}): {resp.text}")
     return False
 
 # ----------------------------------------
@@ -86,7 +79,7 @@ def check_invoice_exists(invoice_id: str) -> bool:
 def get_all_invoices_complete():
     all_invoices = []
     seen = set()
-    branch_ids = [1, 2, 3]  # نفس قائمة الفروع في كودك المحلي
+    branch_ids = [1, 2, 3]
 
     for branch in branch_ids:
         page = 1
