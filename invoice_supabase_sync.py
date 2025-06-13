@@ -2,11 +2,15 @@ import os
 import requests
 import time
 from datetime import datetime
-from config import BASE_URL, HEADERS
 
+# إعداد الاتصال بدفترة
+BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com")
+API_KEY = os.getenv("DAFTRA_APIKEY")
+HEADERS = {"apikey": API_KEY}
+
+# إعداد الاتصال بـ Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
 HEADERS_SUPABASE = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -18,7 +22,7 @@ EXPECTED_TYPE = 0
 PAGE_LIMIT = 20
 BRANCH_IDS = [1, 2]
 
-# ✅ بديل مؤقت لـ sync_utils
+# بديل مؤقت لتاريخ التزامن
 def get_last_sync_time(_):
     return "2000-01-01T00:00:00"
 
@@ -94,7 +98,7 @@ def fetch_all():
 
                 total_amount = safe_float(inv_details.get("summary_total"))
 
-                # حفظ الفاتورة في supabase
+                # حفظ الفاتورة في Supabase
                 payload = {
                     "id": str(inv_id),
                     "invoice_no": inv_no,
