@@ -5,6 +5,7 @@ import os
 
 from config import BASE_URL, BRANCH_IDS, PAGE_LIMIT, EXPECTED_TYPE, HEADERS_DAFTRA, HEADERS_SUPABASE, SUPABASE_URL
 
+# إعدادات التسجيل
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -49,27 +50,31 @@ def fetch_all():
                 break
 
             for inv in valid_items:
-                all_invoices.append({
-                    "invoice_id": inv["id"],
-                    "no": inv["no"],
-                    "date": inv["date"],
+                inv_id = str(inv["id"])
+                invoice_data = {
+                    "id": inv_id,
+                    "invoice_no": inv["no"],
+                    "invoice_date": inv["date"],
                     "created_at": inv.get("created_at"),
                     "contact_id": inv.get("contact_id"),
                     "branch_id": inv.get("branch_id"),
                     "staff_id": inv.get("staff_id"),
                     "total": inv.get("total", 0),
                     "invoice_type": inv.get("type", 0)
-                })
+                }
+                all_invoices.append(invoice_data)
 
                 for item in inv.get("InvoiceItem", []):
-                    all_items.append({
-                        "invoice_id": inv["id"],
+                    item_data = {
+                        "id": f"{inv_id}-{item.get('id')}",
+                        "invoice_id": inv_id,
                         "product_id": item.get("product_id"),
                         "description": item.get("description"),
                         "quantity": item.get("quantity", 0),
                         "unit_price": item.get("unit_price", 0),
-                        "total": item.get("total", 0)
-                    })
+                        "total_price": item.get("total", 0)
+                    }
+                    all_items.append(item_data)
 
             if len(items) < 10:
                 logger.info(f"✅ انتهينا من فواتير فرع {branch}، عدد الصفحات: {page}")
@@ -80,20 +85,25 @@ def fetch_all():
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(all_invoices)}")
 
-    # حفظ في Supabase
-    if all_invoices:
-        requests.post(
+    # حفظ الفواتير إلى Supabase (سجل بسجل)
+    for inv in all_invoices:
+        resp = requests.post(
             f"{SUPABASE_URL}/rest/v1/invoices",
             headers=HEADERS_SUPABASE,
-            json=all_invoices
+            json=inv
         )
+        if resp.status_code not in (200, 201):
+            logger.warning(f"⚠️ فشل حفظ الفاتورة {inv.get('id')}: {resp.status_code} - {resp.text}")
 
-    if all_items:
-        requests.post(
+    # حفظ البنود إلى Supabase (سجل بسجل)
+    for item in all_items:
+        resp = requests.post(
             f"{SUPABASE_URL}/rest/v1/invoice_items",
             headers=HEADERS_SUPABASE,
-            json=all_items
+            json=item
         )
+        if resp.status_code not in (200, 201):
+            logger.warning(f"⚠️ فشل حفظ البند للفاتورة {item.get('invoice_id')}: {resp.status_code} - {resp.text}")
 
     logger.info(f"✅ تم حفظ {len(all_invoices)} فاتورة مبيعات جديدة.")
     logger.info(f"✅ الفواتير: {len(all_invoices)} فاتورة، {len(all_items)} بند")
@@ -102,4 +112,3 @@ def fetch_all():
         "invoices": len(all_invoices),
         "items": len(all_items)
     }
-
