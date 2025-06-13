@@ -60,8 +60,8 @@ def get_all_invoices():
             }
             data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
             if data is None:
-                logger.warning(f"⚠️ فشل في جلب البيانات للفرع {branch} الصفحة {page}، نكمل الصفحة التالية...")
-                page += 1
+                logger.warning(f"⚠️ فشل في جلب البيانات للفرع {branch} الصفحة {page}، نعيد المحاولة لاحقًا...")
+                time.sleep(3)
                 continue
 
             items = data.get("data") or []
@@ -74,9 +74,11 @@ def get_all_invoices():
             invoices.extend(valid_items)
 
             if len(items) < PAGE_LIMIT:
+                logger.info(f"✅ انتهينا من فواتير فرع {branch}، عدد الصفحات: {page}")
                 break
+
             page += 1
-            time.sleep(1.5)
+            time.sleep(1)
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(invoices)}")
     return invoices
@@ -103,8 +105,7 @@ def save_invoice_and_items(inv):
         "client_city": safe_string(full.get("client_city"))
     }
     r1 = requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
-
-    if r1.status_code >= 400:
+    if not r1.ok:
         logger.error(f"❌ فشل حفظ الفاتورة {inv_id}: {r1.status_code} - {r1.text}")
         return False, 0
 
@@ -124,10 +125,10 @@ def save_invoice_and_items(inv):
             "total_price": qty * safe_float(itm.get("unit_price"))
         }
         r2 = requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SUPABASE, json=item_payload)
-        if r2.status_code >= 400:
+        if not r2.ok:
             logger.warning(f"⚠️ فشل حفظ البند {itm.get('id')} للفاتورة {inv_id}: {r2.status_code} - {r2.text}")
-            continue
-        count += 1
+        else:
+            count += 1
 
     return True, count
 
@@ -144,6 +145,7 @@ def fetch_all():
         time.sleep(0.2)
 
     logger.info(f"✅ تم حفظ {count_saved} فاتورة مبيعات جديدة.")
+    logger.info(f"✅ الفواتير: {count_saved} فاتورة، {count_items} بند")
     return {
         "invoices": count_saved,
         "items": count_items
