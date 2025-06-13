@@ -65,10 +65,10 @@ def get_all_invoices():
                 continue
 
             items = data.get("data") or []
-            logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(items)} فاتورة")
-
             if not isinstance(items, list):
                 items = [items]
+
+            logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(items)} فاتورة")
 
             valid_items = [inv for inv in items if int(inv.get("type", -1)) == EXPECTED_TYPE]
             invoices.extend(valid_items)
@@ -76,7 +76,7 @@ def get_all_invoices():
             if len(items) < PAGE_LIMIT:
                 break
             page += 1
-            time.sleep(2)  # لتفادي Rate Limiting
+            time.sleep(1.5)
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(invoices)}")
     return invoices
@@ -102,9 +102,9 @@ def save_invoice_and_items(inv):
         "client_business_name": safe_string(full.get("client_business_name"), 255),
         "client_city": safe_string(full.get("client_city"))
     }
-
     r1 = requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
-    if not r1.ok:
+
+    if r1.status_code >= 400:
         logger.error(f"❌ فشل حفظ الفاتورة {inv_id}: {r1.status_code} - {r1.text}")
         return False, 0
 
@@ -124,10 +124,10 @@ def save_invoice_and_items(inv):
             "total_price": qty * safe_float(itm.get("unit_price"))
         }
         r2 = requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SUPABASE, json=item_payload)
-        if r2.ok:
-            count += 1
-        else:
+        if r2.status_code >= 400:
             logger.warning(f"⚠️ فشل حفظ البند {itm.get('id')} للفاتورة {inv_id}: {r2.status_code} - {r2.text}")
+            continue
+        count += 1
 
     return True, count
 
