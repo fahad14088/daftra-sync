@@ -22,7 +22,10 @@ def fetch_with_retry(url, headers, params=None, retries=3, delay=2):
 def fetch_invoice_details(invoice_id):
     url = f"{BASE_URL}/v2/api/entity/invoice/view/{invoice_id}"
     data = fetch_with_retry(url, HEADERS_DAFTRA)
-    return data.get("data", {}).get("Invoice", {}) if data else {}
+    time.sleep(0.4)  # تأخير لتفادي حظر دفترة
+    if not data or "Invoice" not in data.get("data", {}):
+        return None
+    return data["data"]["Invoice"]
 
 def fetch_all():
     all_invoices = []
@@ -39,51 +42,50 @@ def fetch_all():
             }
             data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
             if data is None:
-                logger.warning(f"⚠️ فشل في جلب الصفحة {page} للفرع {branch}")
+                logger.warning(f"⚠️ فشل في جلب البيانات للفرع {branch} الصفحة {page}")
                 break
 
             items = data.get("data") or []
             if not isinstance(items, list):
                 items = [items]
 
-            for inv in items:
-                if int(inv.get("type", -1)) != EXPECTED_TYPE:
-                    continue
+            invoice_ids = [inv.get("id") for inv in items if int(inv.get("type", -1)) == EXPECTED_TYPE]
+            logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(invoice_ids)} فاتورة مؤهلة")
 
-                invoice_id = inv.get("id")
-                detailed = fetch_invoice_details(invoice_id)
-                if not detailed:
+            for invoice_id in invoice_ids:
+                inv = fetch_invoice_details(invoice_id)
+                if not inv:
                     continue
 
                 all_invoices.append({
-                    "id": str(detailed.get("id")),
-                    "invoice_no": detailed.get("no"),
-                    "invoice_date": detailed.get("date"),
-                    "created_at": detailed.get("created_at"),
-                    "total": detailed.get("total"),
-                    "branch": detailed.get("branch_id"),
-                    "customer_id": detailed.get("contact_id"),
-                    "client_business_name": detailed.get("client_business_name"),
-                    "summary_paid": detailed.get("summary_paid"),
-                    "summary_unpaid": detailed.get("summary_unpaid"),
+                    "id": str(inv.get("id")),
+                    "invoice_no": inv.get("no"),
+                    "invoice_date": inv.get("date"),
+                    "customer_id": str(inv.get("contact_id")),
+                    "total": inv.get("total"),
+                    "branch": inv.get("branch_id"),
+                    "created_at": inv.get("created_at"),
+                    "client_id": str(inv.get("Contact", {}).get("id")),
+                    "client_business_name": inv.get("Contact", {}).get("business_name"),
+                    "client_city": inv.get("Contact", {}).get("city"),
+                    "summary_paid": inv.get("summary", {}).get("paid"),
+                    "summary_unpaid": inv.get("summary", {}).get("unpaid")
                 })
 
-                for item in detailed.get("InvoiceItem", []):
+                for item in inv.get("InvoiceItem", []):
                     all_items.append({
                         "id": str(item.get("id")),
-                        "invoice_id": detailed.get("id"),
-                        "product_id": item.get("product_id"),
+                        "invoice_id": str(inv.get("id")),
+                        "product_id": str(item.get("product_id")),
                         "product_code": item.get("product_code"),
-                        "description": item.get("description"),
                         "quantity": item.get("quantity"),
                         "unit_price": item.get("unit_price"),
                         "total_price": item.get("total"),
-                        "client_business_name": detailed.get("client_business_name")
+                        "client_business_name": inv.get("Contact", {}).get("business_name")
                     })
 
-            logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(items)} فاتورة")
             if len(items) < 10:
-                logger.info(f"✅ انتهينا من فرع {branch}")
+                logger.info(f"✅ انتهينا من فرع {branch} صفحة {page}")
                 break
 
             page += 1
@@ -91,20 +93,24 @@ def fetch_all():
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(all_invoices)}")
 
-    # إرسال إلى Supabase
     if all_invoices:
         requests.post(
-            f"{SUPABASE_URL}/rest/v1/invoices?on_conflict=id",
+            f"{SUPABASE_URL}/rest/v1/invoices",
             headers=HEADERS_SUPABASE,
             json=all_invoices
         )
 
     if all_items:
         requests.post(
-            f"{SUPABASE_URL}/rest/v1/invoice_items?on_conflict=id",
+            f"{SUPABASE_URL}/rest/v1/invoice_items",
             headers=HEADERS_SUPABASE,
             json=all_items
         )
 
-    logger.info(f"✅ تم حفظ {len(all_invoices)} فاتورة، و{len(all_items)} بند.")
-    return {"invoices": len(all_invoices), "items": len(all_items)}
+    logger.info(f"✅ تم حفظ {len(all_invoices)} فاتورة مبيعات جديدة.")
+    logger.info(f"✅ البنود: {len(all_items)} بند")
+
+    return {
+        "invoices": len(all_invoices),
+        "items": len(all_items)
+    }
