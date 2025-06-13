@@ -12,18 +12,20 @@ import traceback
 logging.basicConfig(level=logging.DEBUG, format=r'%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# المتغيرات
+# المتغيرات البيئية
 DAFTRA_URL    = os.getenv("DAFTRA_URL")
 DAFTRA_APIKEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL  = os.getenv("SUPABASE_URL")
 SUPABASE_KEY  = os.getenv("SUPABASE_KEY")
 
 def generate_uuid_from_number(number):
+    """توليد UUID من رقم معرف الفاتورة"""
     hash_input = f"invoice-{number}".encode("utf-8")
     digest = hashlib.md5(hash_input).hexdigest()
     return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
 
 def safe_float(value, default=0.0):
+    """تحويل آمن إلى float"""
     try:
         if value in (None, ""):
             return default
@@ -32,48 +34,53 @@ def safe_float(value, default=0.0):
         return default
 
 def safe_string(value, max_length=None):
+    """تحويل آمن إلى str مع تقليم الطول"""
     if value is None:
         return ""
     s = str(value).strip()
     return s[:max_length] if max_length and len(s) > max_length else s
 
 def get_all_branches():
+    """قائمة الفروع الثابتة"""
     return [1, 2, 3]
 
 def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
+    """GET مع إعادة المحاولة"""
     for attempt in range(max_retries):
         try:
             logger.debug(f"GET {url} params={params}")
             resp = requests.get(url, headers=headers, params=params, timeout=timeout)
-            text = resp.text
             if resp.status_code == 200:
                 return resp.json()
-            logger.warning(f"Response {resp.status_code}: {text}")
+            logger.warning(f"Response {resp.status_code}: {resp.text}")
         except Exception as e:
             logger.warning(f"Attempt {attempt+1} failed: {e}")
         time.sleep((attempt + 1) * 2)
     return None
 
 def check_invoice_exists(invoice_id):
-    """التحقق بإحضار عمود id فقط لتجنب خطأ الـ GROUP BY"""
+    """التحقق من وجود الفاتورة باستخدام HEAD لتجنب GROUP BY"""
     invoice_uuid = generate_uuid_from_number(invoice_id)
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}"
     }
     params = {
-        "select": "id",
         "id": f"eq.{invoice_uuid}"
     }
-    resp = requests.get(f"{SUPABASE_URL}/rest/v1/invoices", headers=headers, params=params, timeout=30)
+    # نستخدم HEAD للحصول فقط على Content-Range
+    resp = requests.head(f"{SUPABASE_URL}/rest/v1/invoices", headers=headers, params=params, timeout=30)
     if resp.status_code == 200:
-        return len(resp.json()) > 0
-    logger.warning(f"❌ Supabase check failed ({resp.status_code}): {resp.text}")
+        cr = resp.headers.get("Content-Range", "")
+        total = int(cr.split("/")[-1]) if "/" in cr else 0
+        return total > 0
+    logger.warning(f"Supabase HEAD failed ({resp.status_code}): {resp.text}")
     return False
 
 def get_all_invoices_complete():
+    """جلب جميع الفواتير الجديدة عبر جميع الصفحات والفروع"""
     headers = {"apikey": DAFTRA_APIKEY}
-    all_invs = []
+    all_invoices = []
     seen = set()
     for branch in get_all_branches():
         page = 1
@@ -88,29 +95,42 @@ def get_all_invoices_complete():
             data = fetch_with_retry(url, headers, params=params)
             if not data:
                 break
-            # مرونة باستخراج القائمة
-            invoices = data.get("data") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+
+            # استخراج القائمة بمرونة
+            if isinstance(data, dict) and "data" in data:
+                invoices = data["data"]
+            elif isinstance(data, list):
+                invoices = data
+            else:
+                invoices = next((v for v in data.values() if isinstance(v, list)), [])
+
             if not invoices:
                 break
+
             for inv in invoices:
                 inv_id = str(inv.get("id"))
                 if inv_id in seen or check_invoice_exists(inv_id):
                     seen.add(inv_id)
                     continue
-                all_invs.append(inv)
+                all_invoices.append(inv)
                 seen.add(inv_id)
+
             if len(invoices) < 100:
                 break
             page += 1
             time.sleep(1)
-    return all_invs
+
+    logger.info(f"📋 إجمالي الفواتير الجديدة: {len(all_invoices)}")
+    return all_invoices
 
 def get_invoice_full_details(invoice_id):
+    """جلب تفاصيل فاتورة واحدة"""
     headers = {"apikey": DAFTRA_APIKEY}
     url = f"{DAFTRA_URL}/v2/api/entity/invoice/{invoice_id}"
     return fetch_with_retry(url, headers)
 
 def save_invoice_complete(inv):
+    """حفظ البيانات الأساسية للفاتورة في Supabase"""
     invoice_id = str(inv["id"])
     inv_uuid = generate_uuid_from_number(invoice_id)
     headers = {
@@ -134,6 +154,7 @@ def save_invoice_complete(inv):
     return resp.status_code in (200, 201, 409)
 
 def save_invoice_items(inv_uuid, invoice_id, items, client_name=""):
+    """حفظ بنود الفاتورة في Supabase"""
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -162,16 +183,19 @@ def save_invoice_items(inv_uuid, invoice_id, items, client_name=""):
     return count
 
 def sync_invoices():
+    """تشغيل المزامنة الشاملة"""
     logger.info("🚀 بدء المزامنة...")
     result = {"invoices": 0, "items": 0, "errors": []}
+
     invoices = get_all_invoices_complete()
     if not invoices:
-        logger.error("❌ لا توجد فواتير!")
+        logger.error("❌ لا توجد فواتير جديدة!")
         return result
+
     for idx, inv in enumerate(invoices, 1):
         inv_id = str(inv["id"])
         if idx % 10 == 0:
-            logger.info(f"🔄 [{idx}/{len(invoices)}] {inv_id}")
+            logger.info(f"🔄 [{idx}/{len(invoices)}] معالجة {inv_id}")
         details = get_invoice_full_details(inv_id) or {}
         full = {**inv, **details}
         if save_invoice_complete(full):
@@ -182,7 +206,8 @@ def sync_invoices():
             result["errors"].append(f"حفظ الفاتورة {inv_id} فشل")
         if idx % 50 == 0:
             time.sleep(2)
-    logger.info(f"✅ فواتير: {result['invoices']}, بنود: {result['items']}, أخطاء: {len(result['errors'])}")
+
+    logger.info(f"✅ فواتير محفوظة: {result['invoices']}, بنود محفوظة: {result['items']}, أخطاء: {len(result['errors'])}")
     return result
 
 if __name__ == "__main__":
