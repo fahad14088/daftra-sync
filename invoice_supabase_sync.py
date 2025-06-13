@@ -2,33 +2,27 @@ import time
 import requests
 import logging
 import os
-
-from config import BASE_URL, BRANCH_IDS, PAGE_LIMIT, EXPECTED_TYPE, HEADERS_DAFTRA, HEADERS_SUPABASE, SUPABASE_URL
+from config import BASE_URL, BRANCH_IDS, HEADERS_DAFTRA, HEADERS_SUPABASE, SUPABASE_URL
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def fetch_with_retry(url, headers, params=None, retries=3, delay=2):
-    for attempt in range(retries):
-        try:
-            response = requests.get(url, headers=headers, params=params)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.warning(f"⚠️ محاولة {attempt+1} فشلت: {response.status_code} - {response.text}")
-        except Exception as e:
-            logger.warning(f"⚠️ محاولة {attempt+1} فشلت: {str(e)}")
-        time.sleep(delay)
+def fetch_invoice_details(inv_id):
+    url = f"{BASE_URL}/v2/api/entity/invoice/view/{inv_id}"
+    try:
+        res = requests.get(url, headers=HEADERS_DAFTRA, timeout=15)
+        if res.status_code == 200:
+            return res.json().get("data", {}).get("Invoice", {})
+        else:
+            logger.warning(f"⚠️ فشل عرض الفاتورة {inv_id}: {res.status_code} - {res.text}")
+    except Exception as e:
+        logger.warning(f"⚠️ خطأ في تحميل الفاتورة {inv_id}: {e}")
     return None
-
-def fetch_invoice_details(invoice_id):
-    url = f"{BASE_URL}/v2/api/entity/invoice/view/{invoice_id}"
-    data = fetch_with_retry(url, HEADERS_DAFTRA)
-    return data.get("data", {}).get("Invoice", {})
 
 def fetch_all():
     all_invoices = []
     all_items = []
+    invoice_ids = []
 
     for branch in BRANCH_IDS:
         page = 1
@@ -37,80 +31,78 @@ def fetch_all():
             params = {
                 "filter[branch_id]": branch,
                 "page": page,
-                "limit": PAGE_LIMIT
+                "limit": 100
             }
-            data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
-            if data is None:
-                logger.warning(f"⚠️ فشل في جلب البيانات للفرع {branch} الصفحة {page}")
+            try:
+                res = requests.get(url, headers=HEADERS_DAFTRA, params=params)
+                if res.status_code != 200:
+                    logger.warning(f"⚠️ صفحة {page} فرع {branch} فشلت: {res.status_code}")
+                    break
+                items = res.json().get("data", [])
+                valid_ids = [str(i["id"]) for i in items if int(i.get("type", -1)) == 0]
+                if not valid_ids:
+                    break
+                invoice_ids.extend(valid_ids)
+                logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(valid_ids)} فاتورة")
+                if len(items) < 10:
+                    break
+                page += 1
+                time.sleep(1)
+            except Exception as e:
+                logger.error(f"❌ خطأ في صفحة {page} فرع {branch}: {e}")
                 break
 
-            items = data.get("data") or []
-            if not isinstance(items, list):
-                items = [items]
+    logger.info(f"📦 عدد الفواتير اللي بنجيب تفاصيلها: {len(invoice_ids)}")
 
-            valid_items = [inv for inv in items if int(inv.get("type", -1)) == EXPECTED_TYPE]
-            logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(valid_items)} فاتورة")
+    for inv_id in invoice_ids:
+        inv = fetch_invoice_details(inv_id)
+        if not inv:
+            continue
 
-            for raw_inv in valid_items:
-                inv_id = raw_inv["id"]
-                inv = fetch_invoice_details(inv_id)
-                if not inv:
-                    continue
+        all_invoices.append({
+            "id": str(inv["id"]),
+            "invoice_no": inv.get("no"),
+            "invoice_date": inv.get("date"),
+            "customer_id": str(inv.get("contact_id", "")),
+            "total": inv.get("total", 0),
+            "branch": inv.get("branch_id"),
+            "created_at": inv.get("created_at"),
+            "client_id": str(inv.get("Contact", {}).get("id", "")),
+            "client_business_name": inv.get("Contact", {}).get("business_name"),
+            "client_city": inv.get("Contact", {}).get("city"),
+            "summary_paid": inv.get("summary", {}).get("paid", 0),
+            "summary_unpaid": inv.get("summary", {}).get("unpaid", 0),
+        })
 
-                all_invoices.append({
-                    "id": str(inv["id"]),
-                    "invoice_no": inv.get("no"),
-                    "invoice_date": inv.get("date"),
-                    "created_at": inv.get("created_at"),
-                    "customer_id": inv.get("contact_id"),
-                    "total": inv.get("total", 0),
-                    "branch": inv.get("branch_id"),
-                    "client_id": inv.get("client_id"),
-                    "client_business_name": inv.get("client_business_name"),
-                    "client_city": inv.get("client_city"),
-                    "summary_paid": inv.get("summary_paid", 0),
-                    "summary_unpaid": inv.get("summary_unpaid", 0),
-                })
+        for item in inv.get("InvoiceItem", []):
+            all_items.append({
+                "id": f"{inv['id']}_{item.get('product_id', '')}",
+                "invoice_id": str(inv["id"]),
+                "product_id": str(item.get("product_id", "")),
+                "product_code": item.get("product_code", ""),
+                "quantity": item.get("quantity", 0),
+                "unit_price": item.get("unit_price", 0),
+                "total_price": item.get("total", 0),
+                "client_business_name": inv.get("Contact", {}).get("business_name"),
+            })
 
-                for item in inv.get("InvoiceItem", []):
-                    all_items.append({
-                        "id": str(item.get("id") or f"{inv['id']}-{item.get('product_id')}"),
-                        "invoice_id": str(inv["id"]),
-                        "product_id": str(item.get("product_id")),
-                        "product_code": item.get("product_code"),
-                        "description": item.get("description"),
-                        "quantity": item.get("quantity", 0),
-                        "unit_price": item.get("unit_price", 0),
-                        "total_price": item.get("total", 0),
-                        "client_business_name": inv.get("client_business_name"),
-                    })
+    logger.info(f"✅ تم تجهيز {len(all_invoices)} فاتورة و {len(all_items)} بند")
 
-            if len(items) < 10:
-                logger.info(f"✅ انتهينا من فواتير فرع {branch}، عدد الصفحات: {page}")
-                break
-
-            page += 1
-            time.sleep(1)
-
-    logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(all_invoices)}")
-
-    # حفظ في Supabase
     if all_invoices:
-        requests.post(
+        r1 = requests.post(
             f"{SUPABASE_URL}/rest/v1/invoices",
             headers=HEADERS_SUPABASE,
             json=all_invoices
         )
+        logger.info(f"📤 حفظ فواتير: {r1.status_code}")
 
     if all_items:
-        requests.post(
+        r2 = requests.post(
             f"{SUPABASE_URL}/rest/v1/invoice_items",
             headers=HEADERS_SUPABASE,
             json=all_items
         )
-
-    logger.info(f"✅ تم حفظ {len(all_invoices)} فاتورة مبيعات جديدة.")
-    logger.info(f"✅ الفواتير: {len(all_invoices)} فاتورة، {len(all_items)} بند")
+        logger.info(f"📤 حفظ بنود: {r2.status_code}")
 
     return {
         "invoices": len(all_invoices),
