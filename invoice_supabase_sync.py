@@ -2,7 +2,27 @@ import time
 import requests
 import logging
 from config import BASE_URL, BRANCH_IDS, PAGE_LIMIT, EXPECTED_TYPE, HEADERS_DAFTRA
+# إعدادات التسجيل
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
+# المتغيرات البيئية
+BASE_URL = os.getenv("DAFTRA_URL")
+API_KEY = os.getenv("DAFTRA_APIKEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+HEADERS_DAFTRA = {"apikey": API_KEY}
+HEADERS_SUPABASE = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "resolution=merge-duplicates"
+}
+
+EXPECTED_TYPE = 0  # نوع فاتورة مبيعات
+PAGE_LIMIT = 100
+BRANCH_IDS = [1, 2, 3]
 logger = logging.getLogger(__name__)
 
 def fetch_with_retry(url, headers, params=None, retries=3, delay=2):
