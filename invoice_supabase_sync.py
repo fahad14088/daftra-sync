@@ -19,13 +19,11 @@ EXPECTED_TYPE = 0
 PAGE_LIMIT = 20
 BRANCH_IDS = [1, 2]
 
-
 def safe_float(val, default=0.0):
     try:
         return float(str(val).replace(",", "")) if val not in (None, "") else default
     except:
         return default
-
 
 def fetch_with_retry(url, headers, max_retries=3, timeout=30):
     for retry in range(max_retries):
@@ -38,9 +36,9 @@ def fetch_with_retry(url, headers, max_retries=3, timeout=30):
             time.sleep((retry + 1) * 2)
     return None
 
-
 def fetch_all():
     inserted = 0
+    item_count = 0
     last_date_str = get_last_sync_time("sales_invoices")
     try:
         last_date = datetime.fromisoformat(last_date_str)
@@ -90,7 +88,7 @@ def fetch_all():
 
                 total_amount = safe_float(inv_details.get("summary_total"))
 
-                # save invoice to supabase
+                # حفظ الفاتورة في supabase
                 payload = {
                     "id": str(inv_id),
                     "invoice_no": inv_no,
@@ -106,10 +104,10 @@ def fetch_all():
                 else:
                     print(f"✅ تم حفظ الفاتورة {inv_id}")
 
-                # delete old items first
-                del_resp = requests.delete(f"{SUPABASE_URL}/rest/v1/invoice_items?invoice_id=eq.{inv_id}", headers=HEADERS_SUPABASE)
+                # حذف البنود القديمة
+                requests.delete(f"{SUPABASE_URL}/rest/v1/invoice_items?invoice_id=eq.{inv_id}", headers=HEADERS_SUPABASE)
 
-                # insert new items
+                # حفظ البنود
                 for item in items:
                     product_id = item.get("product_id")
                     quantity = safe_float(item.get("quantity"))
@@ -128,6 +126,7 @@ def fetch_all():
                             print(f"❌ فشل حفظ البند {inv_id}-{item.get('id')}: {item_resp.text}")
                         else:
                             print(f"🟢 تم حفظ البند {inv_id}-{item.get('id')}")
+                            item_count += 1
 
                 inserted += 1
 
@@ -138,4 +137,4 @@ def fetch_all():
 
     update_sync_time("sales_invoices", datetime.now().isoformat())
     print(f"\n✅ تم حفظ {inserted} فاتورة مبيعات جديدة.")
-    return True
+    return {"invoices": inserted, "items": item_count}
