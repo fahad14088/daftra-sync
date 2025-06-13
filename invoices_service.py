@@ -45,25 +45,32 @@ def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
             resp = requests.get(url, headers=headers, params=params, timeout=timeout)
             if resp.status_code == 200:
                 return resp.json()
-            logger.warning(f"Response {resp.status_code}: {resp.text}")
+            logger.warning(f"🔸 Response {resp.status_code}: {resp.text}")
         except Exception as e:
-            logger.warning(f"Attempt {attempt} failed: {e}")
+            logger.warning(f"🔸 Attempt {attempt} failed: {e}")
         time.sleep(attempt * 2)
     return None
 
 def check_invoice_exists(invoice_id: str) -> bool:
-    uuid_ = generate_uuid_from_number(invoice_id)
+    """
+    HEAD مع select=id لتجنب JOIN كبير:
+    Supabase REST سيقوم بعدّ السجلات فقط على عمود id دون جلب الجداول المرتبطة.
+    """
+    inv_uuid = generate_uuid_from_number(invoice_id)
     resp = requests.head(
         f"{SUPABASE_URL}/rest/v1/invoices",
         headers={**HEADERS, **{"Authorization": f"Bearer {SUPABASE_KEY}"}},
-        params={"id": f"eq.{uuid_}"},
+        params={
+            "select": "id",
+            "id": f"eq.{inv_uuid}"
+        },
         timeout=30
     )
     if resp.status_code == 200:
         cr = resp.headers.get("Content-Range", "")
         total = int(cr.split("/")[-1]) if "/" in cr else 0
         return total > 0
-    logger.warning(f"Supabase HEAD failed ({resp.status_code}): {resp.text}")
+    logger.warning(f"❌ Supabase HEAD failed ({resp.status_code}): {resp.text}")
     return False
 
 # ----------------------------------------
@@ -72,7 +79,7 @@ def check_invoice_exists(invoice_id: str) -> bool:
 def get_all_invoices_complete():
     all_invoices = []
     seen = set()
-    branch_ids = [1, 2, 3]  # من كودك المحلي
+    branch_ids = [1, 2, 3]
 
     for branch in branch_ids:
         page = 1
@@ -86,10 +93,10 @@ def get_all_invoices_complete():
             }
             data = fetch_with_retry(url, HEADERS, params=params)
             if not data:
-                logger.error(f"Failed to fetch branch {branch} page {page}")
+                logger.error(f"❌ Failed to fetch branch {branch} page {page}")
                 break
 
-            invoices = data.get("data") if isinstance(data, dict) else []
+            invoices = data.get("data") or []
             if not invoices:
                 break
 
@@ -106,7 +113,7 @@ def get_all_invoices_complete():
             page += 1
             time.sleep(1)
 
-    logger.info(f"Total invoices to process: {len(all_invoices)}")
+    logger.info(f"📋 Total invoices to process: {len(all_invoices)}")
     return all_invoices
 
 # ----------------------------------------
@@ -172,25 +179,23 @@ def save_invoice_items(inv_uuid: str, invoice_id: str, items) -> int:
 # المزامنة الرئيسية
 # ----------------------------------------
 def sync_invoices():
-    logger.info("Starting sync...")
+    logger.info("🚀 Starting sync...")
     invoices = get_all_invoices_complete()
-    saved_count = 0
+    saved = 0
 
-    for idx, inv in enumerate(invoices, 1):
+    for inv in invoices:
         inv_id = str(inv.get("id", ""))
         details = get_invoice_full_details(inv_id)
         full = {**inv, **details}
         if save_invoice_complete(full):
-            saved_count += 1
+            saved += 1
             inv_uuid = generate_uuid_from_number(inv_id)
             items = details.get("invoice_item", [])
             save_invoice_items(inv_uuid, inv_id, items)
-
-        # throttle
         time.sleep(0.2)
 
-    logger.info(f"Sync complete: {saved_count}/{len(invoices)} invoices saved.")
-    return {"processed": len(invoices), "saved": saved_count}
+    logger.info(f"✅ Sync complete: {saved}/{len(invoices)} invoices saved.")
+    return {"processed": len(invoices), "saved": saved}
 
 if __name__ == "__main__":
     sync_invoices()
