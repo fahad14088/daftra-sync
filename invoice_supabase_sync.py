@@ -23,7 +23,7 @@ HEADERS_SUPABASE = {
 
 EXPECTED_TYPE = 0  # نوع فاتورة مبيعات
 PAGE_LIMIT = 100
-BRANCH_IDS = [1, 2, 3]
+BRANCH_IDS = [1]  # غيّرها لاحقًا إذا تبي تدعم أكثر من فرع
 
 def safe_float(val, default=0.0):
     try:
@@ -74,7 +74,7 @@ def get_all_invoices():
             if len(items) < PAGE_LIMIT:
                 break
             page += 1
-            time.sleep(2)  # لتفادي Rate Limiting
+            time.sleep(1)  # تخفيف الضغط على API
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(invoices)}")
     return invoices
@@ -100,6 +100,7 @@ def save_invoice_and_items(inv):
         "client_business_name": safe_string(full.get("client_business_name"), 255),
         "client_city": safe_string(full.get("client_city"))
     }
+
     r1 = requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
 
     items = full.get("invoice_item") or []
