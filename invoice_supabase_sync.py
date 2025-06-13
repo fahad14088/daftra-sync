@@ -23,7 +23,7 @@ HEADERS_SUPABASE = {
 
 EXPECTED_TYPE = 0  # نوع فاتورة مبيعات
 PAGE_LIMIT = 100
-BRANCH_IDS = [1]  # غيّرها لاحقًا إذا تبي تدعم أكثر من فرع
+BRANCH_IDS = [1, 2, 3]
 
 def safe_float(val, default=0.0):
     try:
@@ -59,8 +59,9 @@ def get_all_invoices():
                 "limit": PAGE_LIMIT
             }
             data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
+
             if data is None:
-                logger.warning(f"⚠️ فشل في جلب البيانات للفرع {branch} الصفحة {page}، نكمل الصفحة التالية...")
+                logger.warning(f"⚠️ فشل جلب الصفحة {page} للفرع {branch}، تجاوزها...")
                 page += 1
                 continue
 
@@ -71,10 +72,12 @@ def get_all_invoices():
             valid_items = [inv for inv in items if int(inv.get("type", -1)) == EXPECTED_TYPE]
             invoices.extend(valid_items)
 
+            logger.info(f"📄 فرع {branch} - صفحة {page} فيها {len(items)} فاتورة")
+
             if len(items) < PAGE_LIMIT:
                 break
             page += 1
-            time.sleep(1)  # تخفيف الضغط على API
+            time.sleep(1)
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(invoices)}")
     return invoices
@@ -100,8 +103,7 @@ def save_invoice_and_items(inv):
         "client_business_name": safe_string(full.get("client_business_name"), 255),
         "client_city": safe_string(full.get("client_city"))
     }
-
-    r1 = requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
+    requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=payload)
 
     items = full.get("invoice_item") or []
     count = 0
