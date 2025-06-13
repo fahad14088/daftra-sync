@@ -2,10 +2,9 @@ import time
 import requests
 import logging
 import os
-
+import uuid
 from config import BASE_URL, BRANCH_IDS, PAGE_LIMIT, EXPECTED_TYPE, HEADERS_DAFTRA, HEADERS_SUPABASE, SUPABASE_URL
 
-# إعدادات التسجيل
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -51,30 +50,32 @@ def fetch_all():
 
             for inv in valid_items:
                 inv_id = str(inv["id"])
-                invoice_data = {
+                all_invoices.append({
                     "id": inv_id,
-                    "invoice_no": inv["no"],
-                    "invoice_date": inv["date"],
+                    "invoice_no": inv.get("no"),
+                    "invoice_date": inv.get("date"),
                     "created_at": inv.get("created_at"),
-                    "contact_id": inv.get("contact_id"),
-                    "branch_id": inv.get("branch_id"),
-                    "staff_id": inv.get("staff_id"),
+                    "customer_id": str(inv.get("contact_id")) if inv.get("contact_id") else None,
+                    "branch": inv.get("branch_id"),
                     "total": inv.get("total", 0),
-                    "invoice_type": inv.get("type", 0)
-                }
-                all_invoices.append(invoice_data)
+                    "client_id": str(inv.get("contact_id")) if inv.get("contact_id") else None,
+                    "client_business_name": inv.get("Contact", {}).get("business_name"),
+                    "client_city": inv.get("Contact", {}).get("city"),
+                    "summary_paid": inv.get("summary", {}).get("paid"),
+                    "summary_unpaid": inv.get("summary", {}).get("unpaid")
+                })
 
                 for item in inv.get("InvoiceItem", []):
-                    item_data = {
-                        "id": f"{inv_id}-{item.get('id')}",
+                    all_items.append({
+                        "id": str(uuid.uuid4()),
                         "invoice_id": inv_id,
-                        "product_id": item.get("product_id"),
-                        "description": item.get("description"),
+                        "product_id": str(item.get("product_id")),
+                        "product_code": item.get("product_code"),
+                        "client_business_name": inv.get("Contact", {}).get("business_name"),
                         "quantity": item.get("quantity", 0),
                         "unit_price": item.get("unit_price", 0),
                         "total_price": item.get("total", 0)
-                    }
-                    all_items.append(item_data)
+                    })
 
             if len(items) < 10:
                 logger.info(f"✅ انتهينا من فواتير فرع {branch}، عدد الصفحات: {page}")
@@ -85,25 +86,23 @@ def fetch_all():
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(all_invoices)}")
 
-    # حفظ الفواتير إلى Supabase (سجل بسجل)
-    for inv in all_invoices:
-        resp = requests.post(
-            f"{SUPABASE_URL}/rest/v1/invoices",
-            headers=HEADERS_SUPABASE,
-            json=inv
-        )
-        if resp.status_code not in (200, 201):
-            logger.warning(f"⚠️ فشل حفظ الفاتورة {inv.get('id')}: {resp.status_code} - {resp.text}")
+    if all_invoices:
+        for i in range(0, len(all_invoices), 500):
+            chunk = all_invoices[i:i+500]
+            requests.post(
+                f"{SUPABASE_URL}/rest/v1/invoices",
+                headers=HEADERS_SUPABASE,
+                json=chunk
+            )
 
-    # حفظ البنود إلى Supabase (سجل بسجل)
-    for item in all_items:
-        resp = requests.post(
-            f"{SUPABASE_URL}/rest/v1/invoice_items",
-            headers=HEADERS_SUPABASE,
-            json=item
-        )
-        if resp.status_code not in (200, 201):
-            logger.warning(f"⚠️ فشل حفظ البند للفاتورة {item.get('invoice_id')}: {resp.status_code} - {resp.text}")
+    if all_items:
+        for i in range(0, len(all_items), 500):
+            chunk = all_items[i:i+500]
+            requests.post(
+                f"{SUPABASE_URL}/rest/v1/invoice_items",
+                headers=HEADERS_SUPABASE,
+                json=chunk
+            )
 
     logger.info(f"✅ تم حفظ {len(all_invoices)} فاتورة مبيعات جديدة.")
     logger.info(f"✅ الفواتير: {len(all_invoices)} فاتورة، {len(all_items)} بند")
