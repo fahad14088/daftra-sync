@@ -49,7 +49,6 @@ def fetch_with_retry(url, headers, params=None, max_retries=3, timeout=30):
 
 def get_all_invoices():
     invoices = []
-
     for branch in BRANCH_IDS:
         page = 1
         while True:
@@ -60,23 +59,22 @@ def get_all_invoices():
                 "limit": PAGE_LIMIT
             }
             data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
-            if not data:
-                logger.error(f"❌ فشل جلب الفواتير للفرع {branch} الصفحة {page}")
-                break
+            if data is None:
+                logger.warning(f"⚠️ فشل في جلب البيانات للفرع {branch} الصفحة {page}، نكمل الصفحة التالية...")
+                page += 1
+                continue
 
             items = data.get("data") or []
-            if not items:
-                break
+            if not isinstance(items, list):
+                items = [items]
 
-            for inv in items:
-                inv_type = int(inv.get("type", -1))
-                if inv_type == EXPECTED_TYPE:
-                    invoices.append(inv)
+            valid_items = [inv for inv in items if int(inv.get("type", -1)) == EXPECTED_TYPE]
+            invoices.extend(valid_items)
 
             if len(items) < PAGE_LIMIT:
                 break
             page += 1
-            time.sleep(1)
+            time.sleep(2)  # لتفادي Rate Limiting
 
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(invoices)}")
     return invoices
@@ -134,7 +132,7 @@ def fetch_all():
         if saved:
             count_saved += 1
             count_items += item_count
-        time.sleep(0.3)
+        time.sleep(0.2)
 
     logger.info(f"✅ تم حفظ {count_saved} فاتورة مبيعات جديدة.")
     return {
