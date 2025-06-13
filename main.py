@@ -2,8 +2,7 @@
 import os
 import sys
 from products_service import sync_products
-from invoices_service import sync_invoices
-# …
+from invoice_supabase_sync import fetch_all as sync_invoices  # استخدام كود الفواتير الجديد
 
 def main():
     print(f"🔄 مزامنة المنتجات... URL={os.getenv('DAFTRA_URL')}")
