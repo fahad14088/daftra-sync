@@ -27,7 +27,7 @@ HEADERS_SUPABASE = {
 EXPECTED_TYPE = 0  # للمبيعات
 PAGE_LIMIT = 50
 BRANCH_IDS = [2, 3]
-BATCH_SIZE = 100
+BATCH_SIZE = 50  # تقليل حجم الدفعة
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 
@@ -64,9 +64,9 @@ class DataValidator:
             'id': str(invoice.get('id', '')),
             'invoice_no': str(invoice.get('no', '')),
             'invoice_date': DataValidator.format_date(invoice.get('date')),
-            'customer_id': str(invoice.get('client_id', '')),  # تم التصحيح
-            'summary_total': float(invoice.get('summary_total', 0)),  # تم التصحيح
-            'branch': int(invoice.get('store_id', 0)),  # تم التصحيح
+            'customer_id': str(invoice.get('client_id', '')),
+            'summary_total': float(invoice.get('summary_total', 0)),
+            'branch': int(invoice.get('store_id', 0)),
             'client_business_name': str(invoice.get('client_business_name', ''))[:255],
             'client_city': str(invoice.get('client_city', ''))[:100],
             'summary_paid': float(invoice.get('summary_paid', 0)),
@@ -86,7 +86,7 @@ class DataValidator:
             'unit_price': float(item.get('unit_price', 0)),
             'subtotal': float(item.get('subtotal', 0)),
             'product_id': str(item.get('product_id', '')),
-            'product_code': str(item.get('item', ''))[:50],  # تم التصحيح
+            'product_code': str(item.get('item', ''))[:50],
             'client_business_name': str(client_name)[:255],
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat()
@@ -271,18 +271,23 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         stats['invoices_processed'] += valid_invoices
         stats['items_processed'] += len(items_batch)
         
-        # حفظ الدفعات عند الوصول للحد الأقصى
+        # حفظ الفواتير أولاً عند الوصول للحد الأقصى
         if len(invoices_batch) >= BATCH_SIZE:
+            # حفظ الفواتير أولاً
             saved, failed = supabase_client.upsert_batch('invoices', invoices_batch)
             stats['invoices_saved'] += saved
             stats['invoices_failed'] += failed
             invoices_batch = []
             
-        if len(items_batch) >= BATCH_SIZE:
-            saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
-            stats['items_saved'] += saved
-            stats['items_failed'] += failed
-            items_batch = []
+            # انتظار قصير للتأكد من حفظ الفواتير
+            time.sleep(1)
+            
+            # ثم حفظ البنود المرتبطة
+            if items_batch:
+                saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
+                stats['items_saved'] += saved
+                stats['items_failed'] += failed
+                items_batch = []
         
         page += 1
         
@@ -291,12 +296,16 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
             logger.warning(f"⚠️ تم الوصول للحد الأقصى من الصفحات للفرع {branch_id}")
             break
     
-    # حفظ الدفعات المتبقية
+    # حفظ الدفعات المتبقية - الفواتير أولاً
     if invoices_batch:
         saved, failed = supabase_client.upsert_batch('invoices', invoices_batch)
         stats['invoices_saved'] += saved
         stats['invoices_failed'] += failed
         
+        # انتظار قصير
+        time.sleep(1)
+        
+    # ثم حفظ البنود المتبقية
     if items_batch:
         saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
         stats['items_saved'] += saved
