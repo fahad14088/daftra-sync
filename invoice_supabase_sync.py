@@ -322,4 +322,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # إضافة alias للتوافق مع main.py
+fetch_all = main
+
 
