@@ -27,8 +27,12 @@ def post_to_supabase(endpoint, data, label):
     try:
         url = f"{SUPABASE_URL}/rest/v1/{endpoint}?on_conflict=id"
         res = requests.post(url, headers=HEADERS_SUPABASE, json=data)
+        
+        print(f"\n📤 إرسال {label} إلى Supabase → Status: {res.status_code}")
+        print(f"📥 الرد من Supabase:\n{res.text}\n")
+
         if res.status_code >= 300:
-            print(f"❌ فشل حفظ {label}: {res.status_code} - {res.text}")
+            print(f"❌ فشل حفظ {label}")
         else:
             print(f"✅ تم حفظ {label}: {len(data)} سجل")
     except Exception as e:
