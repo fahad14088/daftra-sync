@@ -26,7 +26,7 @@ HEADERS_SUPABASE = {
 
 EXPECTED_TYPE = 0  # للمبيعات
 PAGE_LIMIT = 50
-BRANCH_IDS = [2, 3]
+BRANCH_IDS = [2, 1]
 BATCH_SIZE = 50
 MAX_RETRIES = 3
 RETRY_DELAY = 2
@@ -310,9 +310,9 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         page += 1
         
         # حماية من الحلقات اللانهائية
-        if page > 100:
-            logger.warning(f"⚠️ تم الوصول للحد الأقصى من الصفحات للفرع {branch_id}")
-            break
+      #  if page > 100:
+       #     logger.warning(f"⚠️ تم الوصول للحد الأقصى من الصفحات للفرع {branch_id}")
+        #    break
     
     # حفظ الدفعات المتبقية - الفواتير أولاً
     if invoices_batch:
