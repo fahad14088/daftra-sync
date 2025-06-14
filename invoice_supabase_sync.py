@@ -30,15 +30,15 @@ def post_to_supabase(endpoint, data, label):
 
     for record in data:
         try:
-            res = requests.post(url, headers=HEADERS_SUPABASE, json=[record])  # لازم يكون list
+            res = requests.post(url, headers=HEADERS_SUPABASE, json=[record])
+            print(f"🔎 {label} - {record.get('id', '')}: {res.status_code} - {res.text}")
             if res.status_code >= 300:
                 failed += 1
-                print(f"❌ {label} - فشل {record.get('id', '')}: {res.status_code} - {res.text}")
             else:
                 success += 1
         except Exception as e:
-            failed += 1
             print(f"❌ {label} - استثناء {record.get('id', '')}: {str(e)}")
+            failed += 1
 
     print(f"📊 {label} - ناجحة: {success}, فاشلة: {failed}")
 
@@ -114,9 +114,11 @@ def fetch_all():
     logger.info(f"📦 عدد الفواتير: {len(all_invoices)}, عدد البنود: {len(all_items)}")
 
     if all_invoices:
+        print("🔁 بدء رفع الفواتير...")
         post_to_supabase("invoices", all_invoices, "الفواتير")
 
     if all_items:
+        print("🔁 بدء رفع البنود...")
         post_to_supabase("invoice_items", all_items, "بنود الفواتير")
 
     return {"invoices": len(all_invoices), "items": len(all_items)}
