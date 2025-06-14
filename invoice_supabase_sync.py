@@ -27,7 +27,7 @@ HEADERS_SUPABASE = {
 EXPECTED_TYPE = 0  # للمبيعات
 PAGE_LIMIT = 50
 BRANCH_IDS = [2, 3]
-BATCH_SIZE = 50  # تقليل حجم الدفعة
+BATCH_SIZE = 50
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 
@@ -122,19 +122,37 @@ class SupabaseClient:
         self.session.headers.update(self.headers)
     
     def upsert_batch(self, table: str, data: List[Dict[str, Any]]) -> tuple[int, int]:
-        """إدراج أو تحديث دفعة من البيانات"""
+        """إدراج أو تحديث دفعة من البيانات مع حل مشكلة التكرار"""
         if not data:
             return 0, 0
         
-        url = f"{self.base_url}/{table}"
+        # إضافة معاملة للتعامل مع البيانات المكررة
+        url = f"{self.base_url}/{table}?on_conflict=id"
+        
+        # إعداد headers خاصة للـ upsert
+        upsert_headers = {
+            **self.headers,
+            "Prefer": "resolution=merge-duplicates,return=minimal"
+        }
         
         for attempt in range(MAX_RETRIES):
             try:
-                response = self.session.post(url, json=data, timeout=30)
+                response = self.session.post(url, json=data, headers=upsert_headers, timeout=30)
                 
                 if response.status_code in [200, 201]:
-                    logger.info(f"✅ تم حفظ {len(data)} سجل في جدول {table}")
+                    logger.info(f"✅ تم حفظ/تحديث {len(data)} سجل في جدول {table}")
                     return len(data), 0
+                elif response.status_code == 409:
+                    # في حالة التكرار، جرب مرة أخرى مع تحديث فقط
+                    logger.warning(f"⚠️ بيانات مكررة في {table}، محاولة التحديث...")
+                    update_headers = {
+                        **self.headers,
+                        "Prefer": "resolution=ignore-duplicates,return=minimal"
+                    }
+                    response = self.session.post(url, json=data, headers=update_headers, timeout=30)
+                    if response.status_code in [200, 201]:
+                        logger.info(f"✅ تم تحديث {len(data)} سجل في جدول {table}")
+                        return len(data), 0
                 else:
                     logger.error(f"❌ خطأ في حفظ {table}: {response.status_code} - {response.text}")
                     
