@@ -3,9 +3,34 @@ import requests
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from config import BASE_URL, BRANCH_IDS, PAGE_LIMIT, EXPECTED_TYPE, HEADERS_DAFTRA, SUPABASE_URL, HEADERS_SUPABASE
+import os
 
-# إعداد نظام التسجيل المحسن
+# إعداد المتغيرات مباشرة
+BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com/v2/api")
+DAFTRA_API_KEY = os.getenv("DAFTRA_APIKEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/") + "/rest/v1"
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+HEADERS_DAFTRA = {
+    "apikey": DAFTRA_API_KEY,
+    "Content-Type": "application/json"
+}
+
+HEADERS_SUPABASE = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"
+}
+
+EXPECTED_TYPE = 0  # للمبيعات
+PAGE_LIMIT = 50
+BRANCH_IDS = [2, 3]
+BATCH_SIZE = 100
+MAX_RETRIES = 3
+RETRY_DELAY = 2
+
+# إعداد نظام التسجيل
 logging.basicConfig(
     level=logging.INFO, 
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -20,361 +45,281 @@ class DataValidator:
     """فئة للتحقق من صحة البيانات قبل الإرسال"""
     
     @staticmethod
-    def validate_invoice(invoice: Dict[str, Any]) -> Dict[str, Any]:
-        """التحقق من صحة بيانات الفاتورة وتنظيفها"""
-        validated = {}
-        
-        # التحقق من المعرف الفريد
-        if not invoice.get('id'):
-            raise ValueError("معرف الفاتورة مطلوب")
-        validated['id'] = str(invoice['id'])
-        
-        # التحقق من رقم الفاتورة
-        validated['invoice_no'] = str(invoice.get('no', ''))
-        
-        # التحقق من تاريخ الفاتورة
-        invoice_date = invoice.get('date')
-        if invoice_date:
-            try:
-                # تحويل التاريخ إلى صيغة ISO إذا لم يكن كذلك
-                if isinstance(invoice_date, str) and 'T' not in invoice_date:
-                    validated['invoice_date'] = f"{invoice_date}T00:00:00"
-                else:
-                    validated['invoice_date'] = invoice_date
-            except:
-                validated['invoice_date'] = None
-        else:
-            validated['invoice_date'] = None
-        
-        # التحقق من البيانات الرقمية
-        validated['customer_id'] = invoice.get('client_id')
-        validated['total'] = float(invoice.get('summary_total', 0))
-        validated['branch'] = invoice.get('branch_id')
-        validated['summary_paid'] = float(invoice.get('summary_paid', 0))
-        validated['summary_unpaid'] = float(invoice.get('summary_unpaid', 0))
-        
-        # التحقق من البيانات النصية
-        validated['client_business_name'] = str(invoice.get('client_business_name', ''))[:255]
-        validated['client_city'] = str(invoice.get('client_city', ''))[:100]
-        
-        # إضافة تاريخ الإنشاء
-        created_at = invoice.get('created')
-        if created_at:
-            try:
-                if isinstance(created_at, str) and 'T' not in created_at:
-                    validated['created_at'] = f"{created_at}T00:00:00"
-                else:
-                    validated['created_at'] = created_at
-            except:
-                validated['created_at'] = datetime.now().isoformat()
-        else:
-            validated['created_at'] = datetime.now().isoformat()
-        
-        return validated
+    def validate_invoice(invoice: Dict[str, Any]) -> bool:
+        """التحقق من صحة بيانات الفاتورة"""
+        required_fields = ['id']
+        return all(field in invoice and invoice[field] is not None for field in required_fields)
     
     @staticmethod
-    def validate_invoice_item(item: Dict[str, Any], invoice_id: str, client_name: str = '') -> Dict[str, Any]:
-        """التحقق من صحة بيانات بند الفاتورة وتنظيفها"""
-        validated = {}
+    def validate_item(item: Dict[str, Any]) -> bool:
+        """التحقق من صحة بيانات البند"""
+        required_fields = ['id', 'invoice_id']
+        return all(field in item and item[field] is not None for field in required_fields)
+    
+    @staticmethod
+    def clean_invoice_data(invoice: Dict[str, Any]) -> Dict[str, Any]:
+        """تنظيف وتحويل بيانات الفاتورة"""
+        cleaned = {
+            'id': str(invoice.get('id', '')),
+            'invoice_no': str(invoice.get('invoice_no', '')),
+            'invoice_date': DataValidator.format_date(invoice.get('invoice_date')),
+            'customer_id': str(invoice.get('customer_id', '')),
+            'total': float(invoice.get('total', 0)),
+            'branch': int(invoice.get('branch', 0)),
+            'client_business_name': str(invoice.get('client_business_name', ''))[:255],
+            'client_city': str(invoice.get('client_city', ''))[:100],
+            'summary_paid': float(invoice.get('summary_paid', 0)),
+            'summary_unpaid': float(invoice.get('summary_unpaid', 0)),
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }
+        return cleaned
+    
+    @staticmethod
+    def clean_item_data(item: Dict[str, Any], invoice_id: str, client_name: str) -> Dict[str, Any]:
+        """تنظيف وتحويل بيانات البند"""
+        cleaned = {
+            'id': str(item.get('id', '')),
+            'invoice_id': str(invoice_id),
+            'quantity': float(item.get('quantity', 0)),
+            'unit_price': float(item.get('unit_price', 0)),
+            'total_price': float(item.get('total_price', 0)),
+            'product_id': str(item.get('product_id', '')),
+            'product_code': str(item.get('product_code', ''))[:50],
+            'client_business_name': str(client_name)[:255],
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }
+        return cleaned
+    
+    @staticmethod
+    def format_date(date_str: Any) -> Optional[str]:
+        """تحويل التاريخ إلى صيغة ISO"""
+        if not date_str:
+            return None
         
-        # التحقق من المعرف الفريد
-        if not item.get('id'):
-            raise ValueError("معرف البند مطلوب")
-        validated['id'] = str(item['id'])
-        
-        # ربط البند بالفاتورة
-        validated['invoice_id'] = str(invoice_id)
-        
-        # التحقق من البيانات الرقمية
-        validated['quantity'] = float(item.get('quantity', 0))
-        validated['unit_price'] = float(item.get('unit_price', 0))
-        validated['total_price'] = float(item.get('subtotal', 0))
-        
-        # معلومات المنتج
-        validated['product_id'] = item.get('product_id')
-        validated['product_code'] = str(item.get('item', ''))[:100]
-        validated['client_business_name'] = str(client_name)[:255]
-        
-        return validated
+        try:
+            if isinstance(date_str, str):
+                # محاولة تحويل التاريخ من صيغ مختلفة
+                for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%d/%m/%Y']:
+                    try:
+                        dt = datetime.strptime(date_str, fmt)
+                        return dt.isoformat()
+                    except ValueError:
+                        continue
+            return str(date_str)
+        except Exception:
+            return None
 
 class SupabaseClient:
-    """فئة محسنة للتعامل مع Supabase"""
+    """عميل محسن للتعامل مع Supabase"""
     
-    def __init__(self, base_url: str, headers: Dict[str, str]):
-        self.base_url = base_url
-        self.headers = headers
-        self.batch_size = 100  # حجم الدفعة
+    def __init__(self):
+        self.base_url = SUPABASE_URL
+        self.headers = HEADERS_SUPABASE
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
     
-    def upsert_data(self, table: str, data: List[Dict[str, Any]], label: str = "") -> Dict[str, int]:
-        """إدراج أو تحديث البيانات في دفعات"""
+    def upsert_batch(self, table: str, data: List[Dict[str, Any]]) -> tuple[int, int]:
+        """إدراج أو تحديث دفعة من البيانات"""
         if not data:
-            logger.warning(f"لا توجد بيانات لإرسالها إلى جدول {table}")
-            return {"success": 0, "failed": 0}
+            return 0, 0
         
-        success_count = 0
-        failed_count = 0
-        failed_records = []
+        url = f"{self.base_url}/{table}"
         
-        # تقسيم البيانات إلى دفعات
-        for i in range(0, len(data), self.batch_size):
-            batch = data[i:i + self.batch_size]
-            batch_num = (i // self.batch_size) + 1
-            total_batches = (len(data) + self.batch_size - 1) // self.batch_size
-            
-            logger.info(f"🔄 {label} - معالجة الدفعة {batch_num}/{total_batches} ({len(batch)} سجل)")
-            
+        for attempt in range(MAX_RETRIES):
             try:
-                # استخدام upsert مع تحديد المفتاح الأساسي
-                url = f"{self.base_url}/rest/v1/{table}"
-                
-                # إعداد headers للupsert
-                upsert_headers = self.headers.copy()
-                upsert_headers['Prefer'] = 'resolution=merge-duplicates'
-                
-                response = requests.post(url, headers=upsert_headers, json=batch)
+                response = self.session.post(url, json=data, timeout=30)
                 
                 if response.status_code in [200, 201]:
-                    success_count += len(batch)
-                    logger.info(f"✅ {label} - نجحت الدفعة {batch_num}: {len(batch)} سجل")
+                    logger.info(f"✅ تم حفظ {len(data)} سجل في جدول {table}")
+                    return len(data), 0
                 else:
-                    failed_count += len(batch)
-                    failed_records.extend(batch)
-                    logger.error(f"❌ {label} - فشلت الدفعة {batch_num}: {response.status_code}")
-                    logger.error(f"تفاصيل الخطأ: {response.text}")
+                    logger.error(f"❌ خطأ في حفظ {table}: {response.status_code} - {response.text}")
                     
-                    # محاولة إرسال السجلات واحداً تلو الآخر في حالة فشل الدفعة
-                    self._retry_individual_records(table, batch, label)
+            except requests.exceptions.RequestException as e:
+                logger.error(f"❌ خطأ في الاتصال مع Supabase (محاولة {attempt + 1}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY)
                     
-            except Exception as e:
-                failed_count += len(batch)
-                failed_records.extend(batch)
-                logger.error(f"❌ {label} - استثناء في الدفعة {batch_num}: {str(e)}")
-            
-            # توقف قصير بين الدفعات لتجنب تحميل الخادم
-            time.sleep(0.5)
-        
-        # حفظ السجلات الفاشلة للمراجعة
-        if failed_records:
-            self._save_failed_records(table, failed_records, label)
-        
-        logger.info(f"📊 {label} - النتيجة النهائية: ناجحة {success_count}, فاشلة {failed_count}")
-        return {"success": success_count, "failed": failed_count}
+        return 0, len(data)
+
+class DaftraClient:
+    """عميل محسن للتعامل مع API دفترة"""
     
-    def _retry_individual_records(self, table: str, batch: List[Dict], label: str):
-        """إعادة محاولة إرسال السجلات واحداً تلو الآخر"""
-        logger.info(f"🔄 {label} - محاولة إرسال السجلات منفردة...")
+    def __init__(self):
+        self.base_url = BASE_URL
+        self.headers = HEADERS_DAFTRA
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+    
+    def fetch_invoices(self, branch_id: int, page: int = 1) -> Dict[str, Any]:
+        """جلب الفواتير من فرع معين"""
+        url = f"{self.base_url}/entity/invoice/list/1"
+        params = {
+            'filter[type]': EXPECTED_TYPE,
+            'filter[branch_id]': branch_id,
+            'page': page,
+            'limit': PAGE_LIMIT
+        }
         
-        url = f"{self.base_url}/rest/v1/{table}"
-        headers = self.headers.copy()
-        headers['Prefer'] = 'resolution=merge-duplicates'
-        
-        for record in batch:
+        for attempt in range(MAX_RETRIES):
             try:
-                response = requests.post(url, headers=headers, json=[record])
-                if response.status_code in [200, 201]:
-                    logger.debug(f"✅ {label} - نجح السجل {record.get('id', 'غير محدد')}")
+                response = self.session.get(url, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    return response.json()
                 else:
-                    logger.warning(f"⚠️ {label} - فشل السجل {record.get('id', 'غير محدد')}: {response.text}")
-            except Exception as e:
-                logger.warning(f"⚠️ {label} - استثناء في السجل {record.get('id', 'غير محدد')}: {str(e)}")
+                    logger.error(f"❌ خطأ في جلب الفواتير: {response.status_code}")
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"❌ خطأ في الاتصال مع دفترة (محاولة {attempt + 1}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY)
+                    
+        return {}
+
+def process_branch_invoices(daftra_client: DaftraClient, supabase_client: SupabaseClient, branch_id: int) -> Dict[str, int]:
+    """معالجة فواتير فرع واحد"""
+    logger.info(f"🏢 بدء معالجة الفرع {branch_id}")
     
-    def _save_failed_records(self, table: str, failed_records: List[Dict], label: str):
-        """حفظ السجلات الفاشلة في ملف للمراجعة"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"failed_{table}_{timestamp}.json"
-        
-        try:
-            import json
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(failed_records, f, ensure_ascii=False, indent=2)
-            logger.info(f"💾 {label} - تم حفظ {len(failed_records)} سجل فاشل في {filename}")
-        except Exception as e:
-            logger.error(f"❌ فشل في حفظ السجلات الفاشلة: {str(e)}")
-
-def fetch_with_retry(url: str, headers: Dict[str, str], params: Optional[Dict] = None, retries: int = 3, delay: int = 2) -> Optional[Dict]:
-    """جلب البيانات مع إعادة المحاولة في حالة الفشل"""
-    for attempt in range(retries):
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.warning(f"⚠️ محاولة {attempt+1} فشلت: {response.status_code} - {response.text}")
-        except requests.exceptions.Timeout:
-            logger.warning(f"⚠️ محاولة {attempt+1} انتهت المهلة الزمنية")
-        except Exception as e:
-            logger.warning(f"⚠️ محاولة {attempt+1} فشلت: {str(e)}")
-        
-        if attempt < retries - 1:  # لا نتوقف في المحاولة الأخيرة
-            time.sleep(delay * (attempt + 1))  # زيادة وقت التوقف مع كل محاولة
+    stats = {
+        'invoices_processed': 0,
+        'items_processed': 0,
+        'invoices_saved': 0,
+        'items_saved': 0,
+        'invoices_failed': 0,
+        'items_failed': 0
+    }
     
-    return None
+    page = 1
+    invoices_batch = []
+    items_batch = []
+    
+    while True:
+        logger.info(f"📄 جلب الصفحة {page} للفرع {branch_id}...")
+        
+        response_data = daftra_client.fetch_invoices(branch_id, page)
+        
+        if not response_data or 'data' not in response_data:
+            logger.warning(f"⚠️ لا توجد بيانات في الصفحة {page} للفرع {branch_id}")
+            break
+            
+        invoices = response_data['data']
+        
+        if not invoices:
+            logger.info(f"✅ انتهاء فواتير الفرع {branch_id} في الصفحة {page}")
+            break
+        
+        valid_invoices = 0
+        
+        for invoice in invoices:
+            if not DataValidator.validate_invoice(invoice):
+                continue
+                
+            # تنظيف بيانات الفاتورة
+            cleaned_invoice = DataValidator.clean_invoice_data(invoice)
+            invoices_batch.append(cleaned_invoice)
+            valid_invoices += 1
+            
+            # معالجة بنود الفاتورة
+            items = invoice.get('items', [])
+            client_name = invoice.get('client_business_name', '')
+            
+            for item in items:
+                if DataValidator.validate_item(item):
+                    cleaned_item = DataValidator.clean_item_data(item, invoice['id'], client_name)
+                    items_batch.append(cleaned_item)
+        
+        logger.info(f"📋 فرع {branch_id} - صفحة {page}: {valid_invoices} فاتورة صالحة من أصل {len(invoices)}")
+        stats['invoices_processed'] += valid_invoices
+        stats['items_processed'] += len([item for item in items_batch if item['invoice_id'] in [inv['id'] for inv in invoices_batch[-valid_invoices:]]])
+        
+        # حفظ الدفعات عند الوصول للحد الأقصى
+        if len(invoices_batch) >= BATCH_SIZE:
+            saved, failed = supabase_client.upsert_batch('invoices', invoices_batch)
+            stats['invoices_saved'] += saved
+            stats['invoices_failed'] += failed
+            invoices_batch = []
+            
+        if len(items_batch) >= BATCH_SIZE:
+            saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
+            stats['items_saved'] += saved
+            stats['items_failed'] += failed
+            items_batch = []
+        
+        page += 1
+        
+        # حماية من الحلقات اللانهائية
+        if page > 100:
+            logger.warning(f"⚠️ تم الوصول للحد الأقصى من الصفحات للفرع {branch_id}")
+            break
+    
+    # حفظ الدفعات المتبقية
+    if invoices_batch:
+        saved, failed = supabase_client.upsert_batch('invoices', invoices_batch)
+        stats['invoices_saved'] += saved
+        stats['invoices_failed'] += failed
+        
+    if items_batch:
+        saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
+        stats['items_saved'] += saved
+        stats['items_failed'] += failed
+    
+    logger.info(f"📊 إحصائيات الفرع {branch_id}: {stats['invoices_processed']} فاتورة، {stats['items_processed']} بند")
+    return stats
 
-def fetch_invoice_details(inv_id: str) -> Optional[Dict]:
-    """جلب تفاصيل الفاتورة مع البنود"""
-    url = f"{BASE_URL}/v2/api/entity/invoice/{inv_id}?include=invoice_item"
-    return fetch_with_retry(url, HEADERS_DAFTRA)
-
-def fetch_all():
-    """الدالة الرئيسية لجلب جميع البيانات وحفظها في Supabase"""
+def main():
+    """الدالة الرئيسية"""
     logger.info("🚀 بدء عملية جلب البيانات من دفترة...")
     
-    # إنشاء عميل Supabase محسن
-    supabase_client = SupabaseClient(SUPABASE_URL, HEADERS_SUPABASE)
+    # التحقق من المتغيرات المطلوبة
+    if not all([DAFTRA_API_KEY, SUPABASE_URL, SUPABASE_KEY]):
+        logger.error("❌ متغيرات البيئة مفقودة!")
+        return
     
-    # إنشاء مدقق البيانات
-    validator = DataValidator()
+    # إنشاء العملاء
+    daftra_client = DaftraClient()
+    supabase_client = SupabaseClient()
     
-    all_invoices = []
-    all_items = []
-    processing_stats = {
-        "total_invoices_processed": 0,
-        "total_items_processed": 0,
-        "validation_errors": 0,
-        "api_errors": 0
+    # إحصائيات إجمالية
+    total_stats = {
+        'invoices_processed': 0,
+        'items_processed': 0,
+        'invoices_saved': 0,
+        'items_saved': 0,
+        'invoices_failed': 0,
+        'items_failed': 0
     }
     
-    for branch in BRANCH_IDS:
-        logger.info(f"🏢 بدء معالجة الفرع {branch}")
-        page = 1
-        branch_invoices = 0
-        branch_items = 0
-        
-        while True:
-            url = f"{BASE_URL}/v2/api/entity/invoice/list/1"
-            params = {
-                "filter[branch_id]": branch,
-                "page": page,
-                "limit": PAGE_LIMIT
-            }
+    # معالجة كل فرع
+    for branch_id in BRANCH_IDS:
+        try:
+            branch_stats = process_branch_invoices(daftra_client, supabase_client, branch_id)
             
-            logger.info(f"📄 جلب الصفحة {page} للفرع {branch}...")
-            data = fetch_with_retry(url, HEADERS_DAFTRA, params=params)
-            
-            if data is None:
-                logger.error(f"❌ فشل في جلب البيانات للفرع {branch} الصفحة {page}")
-                processing_stats["api_errors"] += 1
-                break
-            
-            items = data.get("data") or []
-            if not isinstance(items, list):
-                items = [items]
-            
-            # تصفية الفواتير حسب النوع المطلوب
-            valid_items = [inv for inv in items if int(inv.get("type", -1)) == EXPECTED_TYPE]
-            logger.info(f"📋 فرع {branch} - صفحة {page}: {len(valid_items)} فاتورة صالحة من أصل {len(items)}")
-            
-            if not valid_items:
-                logger.info(f"✅ انتهاء فواتير الفرع {branch} في الصفحة {page}")
-                break
-            
-            # معالجة كل فاتورة
-            for inv in valid_items:
-                try:
-                    # جلب تفاصيل الفاتورة
-                    invoice_data = fetch_invoice_details(inv["id"])
-                    if not invoice_data:
-                        logger.error(f"❌ فشل في جلب تفاصيل الفاتورة {inv['id']}")
-                        processing_stats["api_errors"] += 1
-                        continue
-                    
-                    # التحقق من وجود البنود
-                    invoice_items = invoice_data.get("invoice_item")
-                    if not isinstance(invoice_items, list):
-                        logger.warning(f"⚠️ الفاتورة {inv['id']} لا تحتوي على بنود صالحة")
-                        invoice_items = []
-                    
-                    logger.info(f"📑 الفاتورة {inv['id']}: {len(invoice_items)} بند")
-                    
-                    # التحقق من صحة بيانات الفاتورة
-                    try:
-                        validated_invoice = validator.validate_invoice(invoice_data)
-                        all_invoices.append(validated_invoice)
-                        branch_invoices += 1
-                        processing_stats["total_invoices_processed"] += 1
-                    except ValueError as e:
-                        logger.error(f"❌ خطأ في التحقق من الفاتورة {inv['id']}: {str(e)}")
-                        processing_stats["validation_errors"] += 1
-                        continue
-                    
-                    # معالجة بنود الفاتورة
-                    client_name = invoice_data.get("client_business_name", "")
-                    for item in invoice_items:
-                        try:
-                            validated_item = validator.validate_invoice_item(
-                                item, 
-                                invoice_data["id"], 
-                                client_name
-                            )
-                            all_items.append(validated_item)
-                            branch_items += 1
-                            processing_stats["total_items_processed"] += 1
-                        except ValueError as e:
-                            logger.error(f"❌ خطأ في التحقق من البند {item.get('id', 'غير محدد')}: {str(e)}")
-                            processing_stats["validation_errors"] += 1
-                            continue
+            # تجميع الإحصائيات
+            for key in total_stats:
+                total_stats[key] += branch_stats[key]
                 
-                except Exception as e:
-                    logger.error(f"❌ خطأ عام في معالجة الفاتورة {inv['id']}: {str(e)}")
-                    processing_stats["api_errors"] += 1
-                    continue
-            
-            # التحقق من انتهاء الصفحات
-            if len(items) < PAGE_LIMIT:
-                logger.info(f"✅ انتهاء فواتير الفرع {branch} - إجمالي الصفحات: {page}")
-                break
-            
-            page += 1
-            time.sleep(1)  # توقف قصير بين الصفحات
-        
-        logger.info(f"📊 إحصائيات الفرع {branch}: {branch_invoices} فاتورة، {branch_items} بند")
+        except Exception as e:
+            logger.error(f"❌ خطأ في معالجة الفرع {branch_id}: {e}")
     
-    # طباعة الإحصائيات النهائية
+    # التقرير النهائي
     logger.info("📊 إحصائيات المعالجة النهائية:")
-    logger.info(f"   - الفواتير المعالجة: {processing_stats['total_invoices_processed']}")
-    logger.info(f"   - البنود المعالجة: {processing_stats['total_items_processed']}")
-    logger.info(f"   - أخطاء التحقق: {processing_stats['validation_errors']}")
-    logger.info(f"   - أخطاء API: {processing_stats['api_errors']}")
+    logger.info(f"   - الفواتير المعالجة: {total_stats['invoices_processed']}")
+    logger.info(f"   - البنود المعالجة: {total_stats['items_processed']}")
+    logger.info(f"   - الفواتير المحفوظة: {total_stats['invoices_saved']}")
+    logger.info(f"   - البنود المحفوظة: {total_stats['items_saved']}")
+    logger.info(f"   - أخطاء الفواتير: {total_stats['invoices_failed']}")
+    logger.info(f"   - أخطاء البنود: {total_stats['items_failed']}")
     
-    # حفظ البيانات في Supabase
-    results = {}
+    if total_stats['invoices_processed'] == 0:
+        logger.warning("⚠️ لا توجد فواتير للمعالجة")
     
-    if all_invoices:
-        logger.info(f"🔄 بدء رفع {len(all_invoices)} فاتورة إلى Supabase...")
-        results["invoices"] = supabase_client.upsert_data("invoices", all_invoices, "الفواتير")
-    else:
-        logger.warning("⚠️ لا توجد فواتير للرفع")
-        results["invoices"] = {"success": 0, "failed": 0}
-    
-    if all_items:
-        logger.info(f"🔄 بدء رفع {len(all_items)} بند إلى Supabase...")
-        results["items"] = supabase_client.upsert_data("invoice_items", all_items, "بنود الفواتير")
-    else:
-        logger.warning("⚠️ لا توجد بنود للرفع")
-        results["items"] = {"success": 0, "failed": 0}
-    
-    # تقرير نهائي
     logger.info("🎉 انتهاء العملية - التقرير النهائي:")
-    logger.info(f"   📋 الفواتير: {results['invoices']['success']} نجحت، {results['invoices']['failed']} فشلت")
-    logger.info(f"   📝 البنود: {results['items']['success']} نجح، {results['items']['failed']} فشل")
-    
-    return {
-        "processing_stats": processing_stats,
-        "upload_results": results,
-        "summary": {
-            "total_invoices": len(all_invoices),
-            "total_items": len(all_items),
-            "successful_invoices": results["invoices"]["success"],
-            "successful_items": results["items"]["success"]
-        }
-    }
+    logger.info(f"   📋 الفواتير: {total_stats['invoices_saved']} نجحت، {total_stats['invoices_failed']} فشلت")
+    logger.info(f"   📝 البنود: {total_stats['items_saved']} نجح، {total_stats['items_failed']} فشل")
 
 if __name__ == "__main__":
-    try:
-        result = fetch_all()
-        print("✅ العملية اكتملت بنجاح")
-        print(f"النتائج: {result['summary']}")
-    except Exception as e:
-        logger.error(f"❌ خطأ عام في تشغيل البرنامج: {str(e)}")
-        raise
+    main()
 
