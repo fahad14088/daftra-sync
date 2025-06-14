@@ -26,15 +26,16 @@ def fetch_invoice_details(inv_id):
 def post_to_supabase(endpoint, data, label):
     try:
         url = f"{SUPABASE_URL}/rest/v1/{endpoint}?on_conflict=id"
+        print(f"📤 إرسال {label} إلى Supabase: {len(data)} سجل")
         res = requests.post(url, headers=HEADERS_SUPABASE, json=data)
-        
-        print(f"\n📤 إرسال {label} إلى Supabase → Status: {res.status_code}")
-        print(f"📥 الرد من Supabase:\n{res.text}\n")
+
+        print(f"📥 حالة الاستجابة: {res.status_code}")
+        print(f"📥 نص الرد:\n{res.text}")
 
         if res.status_code >= 300:
-            print(f"❌ فشل حفظ {label}")
+            print(f"❌ فشل الحفظ: {label}")
         else:
-            print(f"✅ تم حفظ {label}: {len(data)} سجل")
+            print(f"✅ نجاح الحفظ: {label}")
     except Exception as e:
         print(f"❌ استثناء أثناء حفظ {label}: {str(e)}")
 
@@ -116,3 +117,4 @@ def fetch_all():
         post_to_supabase("invoice_items", all_items, "بنود الفواتير")
 
     return {"invoices": len(all_invoices), "items": len(all_items)}
+
