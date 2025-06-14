@@ -17,7 +17,7 @@ HEADERS_SUPABASE = {
     "Prefer": "return=minimal"
 }
 
-EXPECTED_TYPE = 1
+EXPECTED_TYPE = 0
 PAGE_LIMIT = 50
 BRANCH_IDS = [2, 3]
 
