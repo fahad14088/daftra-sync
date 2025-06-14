@@ -65,7 +65,7 @@ class DataValidator:
             'invoice_no': str(invoice.get('no', '')),
             'invoice_date': DataValidator.format_date(invoice.get('date')),
             'customer_id': str(invoice.get('client_id', '')),  # تم التصحيح
-            'total': float(invoice.get('summary_total', 0)),  # تم التصحيح
+            'summary_total': float(invoice.get('summary_total', 0))  # تم التصحيح
             'branch': int(invoice.get('store_id', 0)),  # تم التصحيح
             'client_business_name': str(invoice.get('client_business_name', ''))[:255],
             'client_city': str(invoice.get('client_city', ''))[:100],
@@ -84,7 +84,7 @@ class DataValidator:
             'invoice_id': str(invoice_id),
             'quantity': float(item.get('quantity', 0)),
             'unit_price': float(item.get('unit_price', 0)),
-            'total_price': float(item.get('subtotal', 0)),  # تم التصحيح
+            'subtotal': float(item.get('subtotal', 0))  # تم التصحيح
             'product_id': str(item.get('product_id', '')),
             'product_code': str(item.get('item', ''))[:50],  # تم التصحيح
             'client_business_name': str(client_name)[:255],
