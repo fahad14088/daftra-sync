@@ -95,10 +95,12 @@ def fetch_all():
     logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(all_invoices)}")
 
     if all_invoices:
-        requests.post(f"{SUPABASE_URL}/rest/v1/invoices", headers=HEADERS_SUPABASE, json=all_invoices)
+        res = requests.post(f"{SUPABASE_URL}/rest/v1/invoices?on_conflict=id", headers=HEADERS_SUPABASE, json=all_invoices)
+        print("🔁 حفظ الفواتير:", res.status_code, res.text)
 
     if all_items:
-        requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items", headers=HEADERS_SUPABASE, json=all_items)
+        res = requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items?on_conflict=id", headers=HEADERS_SUPABASE, json=all_items)
+        print("🔁 حفظ البنود:", res.status_code, res.text)
 
     logger.info(f"✅ تم حفظ {len(all_invoices)} فاتورة، و {len(all_items)} بند مبيعات.")
     return {"invoices": len(all_invoices), "items": len(all_items)}
