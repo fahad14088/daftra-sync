@@ -24,20 +24,23 @@ def fetch_invoice_details(inv_id):
     return fetch_with_retry(url, HEADERS_DAFTRA)
 
 def post_to_supabase(endpoint, data, label):
-    try:
-        url = f"{SUPABASE_URL}/rest/v1/{endpoint}?on_conflict=id"
-        print(f"📤 إرسال {label} إلى Supabase: {len(data)} سجل")
-        res = requests.post(url, headers=HEADERS_SUPABASE, json=data)
+    url = f"{SUPABASE_URL}/rest/v1/{endpoint}?on_conflict=id"
+    success = 0
+    failed = 0
 
-        print(f"📥 حالة الاستجابة: {res.status_code}")
-        print(f"📥 نص الرد:\n{res.text}")
+    for record in data:
+        try:
+            res = requests.post(url, headers=HEADERS_SUPABASE, json=[record])  # لازم يكون list
+            if res.status_code >= 300:
+                failed += 1
+                print(f"❌ {label} - فشل {record.get('id', '')}: {res.status_code} - {res.text}")
+            else:
+                success += 1
+        except Exception as e:
+            failed += 1
+            print(f"❌ {label} - استثناء {record.get('id', '')}: {str(e)}")
 
-        if res.status_code >= 300:
-            print(f"❌ فشل الحفظ: {label}")
-        else:
-            print(f"✅ نجاح الحفظ: {label}")
-    except Exception as e:
-        print(f"❌ استثناء أثناء حفظ {label}: {str(e)}")
+    print(f"📊 {label} - ناجحة: {success}, فاشلة: {failed}")
 
 def fetch_all():
     all_invoices = []
@@ -117,4 +120,3 @@ def fetch_all():
         post_to_supabase("invoice_items", all_items, "بنود الفواتير")
 
     return {"invoices": len(all_invoices), "items": len(all_items)}
-
