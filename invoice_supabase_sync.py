@@ -20,7 +20,7 @@ def fetch_with_retry(url, headers, params=None, retries=3, delay=2):
     return None
 
 def fetch_invoice_details(inv_id):
-    url = f"{BASE_URL}/v2/api/entity/invoice/{inv_id}"
+    url = f"{BASE_URL}/v2/api/entity/invoice/{inv_id}?include=InvoiceItem"
     return fetch_with_retry(url, HEADERS_DAFTRA)
 
 def fetch_all():
@@ -52,7 +52,7 @@ def fetch_all():
 
             for inv in valid_items:
                 invoice_data = fetch_invoice_details(inv["id"])
-                if not invoice_data or not isinstance(invoice_data.get("InvoiceItem"), list):
+                if not invoice_data or not isinstance(invoice_data.get("invoice_item"), list):
                     logger.error(f"❌ فشل قراءة البنود للفاتورة {inv['id']}")
                     continue
 
@@ -63,24 +63,24 @@ def fetch_all():
                     "customer_id": invoice_data.get("contact_id"),
                     "total": invoice_data.get("total", 0),
                     "branch": invoice_data.get("branch_id"),
-                    "created_at": invoice_data.get("created_at"),
+                    "created_at": invoice_data.get("created"),
                     "client_id": invoice_data.get("contact_id"),
-                    "client_business_name": invoice_data.get("contact", {}).get("business_name"),
-                    "client_city": invoice_data.get("contact", {}).get("city"),
-                    "summary_paid": invoice_data.get("summary", {}).get("paid"),
-                    "summary_unpaid": invoice_data.get("summary", {}).get("unpaid")
+                    "client_business_name": invoice_data.get("client_business_name"),
+                    "client_city": invoice_data.get("client_city"),
+                    "summary_paid": invoice_data.get("summary_paid"),
+                    "summary_unpaid": invoice_data.get("summary_unpaid")
                 })
 
-                for item in invoice_data["InvoiceItem"]:
+                for item in invoice_data["invoice_item"]:
                     all_items.append({
                         "id": str(item["id"]),
                         "invoice_id": str(invoice_data["id"]),
                         "quantity": item.get("quantity", 0),
                         "unit_price": item.get("unit_price", 0),
-                        "total_price": item.get("total", 0),
+                        "total_price": item.get("subtotal", 0),
                         "product_id": item.get("product_id"),
-                        "product_code": item.get("product", {}).get("code"),
-                        "client_business_name": invoice_data.get("contact", {}).get("business_name")
+                        "product_code": item.get("item"),  # item هو كود المنتج في دفترة
+                        "client_business_name": invoice_data.get("client_business_name")
                     })
 
             if len(items) < 10:
