@@ -23,6 +23,17 @@ def fetch_invoice_details(inv_id):
     url = f"{BASE_URL}/v2/api/entity/invoice/{inv_id}?include=invoice_item"
     return fetch_with_retry(url, HEADERS_DAFTRA)
 
+def post_to_supabase(endpoint, data, label):
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/{endpoint}?on_conflict=id"
+        res = requests.post(url, headers=HEADERS_SUPABASE, json=data)
+        if res.status_code >= 300:
+            print(f"❌ فشل حفظ {label}: {res.status_code} - {res.text}")
+        else:
+            print(f"✅ تم حفظ {label}: {len(data)} سجل")
+    except Exception as e:
+        print(f"❌ استثناء أثناء حفظ {label}: {str(e)}")
+
 def fetch_all():
     all_invoices = []
     all_items = []
@@ -92,15 +103,12 @@ def fetch_all():
             page += 1
             time.sleep(1)
 
-    logger.info(f"📦 عدد الفواتير اللي بنعالجها: {len(all_invoices)}")
+    logger.info(f"📦 عدد الفواتير: {len(all_invoices)}, عدد البنود: {len(all_items)}")
 
     if all_invoices:
-        res = requests.post(f"{SUPABASE_URL}/rest/v1/invoices?on_conflict=id", headers=HEADERS_SUPABASE, json=all_invoices)
-        print("🔁 حفظ الفواتير:", res.status_code, res.text)
+        post_to_supabase("invoices", all_invoices, "الفواتير")
 
     if all_items:
-        res = requests.post(f"{SUPABASE_URL}/rest/v1/invoice_items?on_conflict=id", headers=HEADERS_SUPABASE, json=all_items)
-        print("🔁 حفظ البنود:", res.status_code, res.text)
+        post_to_supabase("invoice_items", all_items, "بنود الفواتير")
 
-    logger.info(f"✅ تم حفظ {len(all_invoices)} فاتورة، و {len(all_items)} بند مبيعات.")
     return {"invoices": len(all_invoices), "items": len(all_items)}
