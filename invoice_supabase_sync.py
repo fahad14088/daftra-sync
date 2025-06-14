@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 import os
 
 # إعداد المتغيرات مباشرة
-BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com/v2/api")
+BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com")
 DAFTRA_API_KEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/") + "/rest/v1"
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
