@@ -1,6 +1,7 @@
 import time
 import requests
 import logging
+import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import os
@@ -30,9 +31,9 @@ BATCH_SIZE = 100
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 
-# إعداد نظام التسجيل
+# إعداد نظام التسجيل المفصل
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.DEBUG, 
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler('daftra_sync.log', encoding='utf-8'),
@@ -53,7 +54,7 @@ class DataValidator:
     @staticmethod
     def validate_item(item: Dict[str, Any]) -> bool:
         """التحقق من صحة بيانات البند"""
-        required_fields = ['id', 'invoice_id']
+        required_fields = ['id']
         return all(field in item and item[field] is not None for field in required_fields)
     
     @staticmethod
@@ -61,11 +62,11 @@ class DataValidator:
         """تنظيف وتحويل بيانات الفاتورة"""
         cleaned = {
             'id': str(invoice.get('id', '')),
-            'invoice_no': str(invoice.get('invoice_no', '')),
-            'invoice_date': DataValidator.format_date(invoice.get('invoice_date')),
+            'invoice_no': str(invoice.get('no', '')),
+            'invoice_date': DataValidator.format_date(invoice.get('date')),
             'customer_id': str(invoice.get('customer_id', '')),
             'total': float(invoice.get('total', 0)),
-            'branch': int(invoice.get('branch', 0)),
+            'branch': int(invoice.get('store_id', 0)),
             'client_business_name': str(invoice.get('client_business_name', ''))[:255],
             'client_city': str(invoice.get('client_city', ''))[:100],
             'summary_paid': float(invoice.get('summary_paid', 0)),
@@ -119,6 +120,8 @@ class SupabaseClient:
         self.headers = HEADERS_SUPABASE
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+        logger.info(f"🔗 Supabase URL: {self.base_url}")
+        logger.info(f"🔑 Supabase Key: {SUPABASE_KEY[:20]}...")
     
     def upsert_batch(self, table: str, data: List[Dict[str, Any]]) -> tuple[int, int]:
         """إدراج أو تحديث دفعة من البيانات"""
@@ -126,16 +129,23 @@ class SupabaseClient:
             return 0, 0
         
         url = f"{self.base_url}/{table}"
+        logger.info(f"📤 محاولة حفظ {len(data)} سجل في جدول {table}")
+        logger.debug(f"🔗 URL: {url}")
+        logger.debug(f"📋 عينة من البيانات: {json.dumps(data[0], indent=2, ensure_ascii=False)}")
         
         for attempt in range(MAX_RETRIES):
             try:
                 response = self.session.post(url, json=data, timeout=30)
                 
+                logger.info(f"📊 استجابة Supabase: {response.status_code}")
+                logger.debug(f"📄 محتوى الاستجابة: {response.text}")
+                
                 if response.status_code in [200, 201]:
                     logger.info(f"✅ تم حفظ {len(data)} سجل في جدول {table}")
                     return len(data), 0
                 else:
-                    logger.error(f"❌ خطأ في حفظ {table}: {response.status_code} - {response.text}")
+                    logger.error(f"❌ خطأ في حفظ {table}: {response.status_code}")
+                    logger.error(f"📄 تفاصيل الخطأ: {response.text}")
                     
             except requests.exceptions.RequestException as e:
                 logger.error(f"❌ خطأ في الاتصال مع Supabase (محاولة {attempt + 1}): {e}")
@@ -152,10 +162,12 @@ class DaftraClient:
         self.headers = HEADERS_DAFTRA
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+        logger.info(f"🔗 Daftra URL: {self.base_url}")
+        logger.info(f"🔑 Daftra API Key: {DAFTRA_API_KEY[:20]}...")
     
     def fetch_invoices(self, branch_id: int, page: int = 1) -> Dict[str, Any]:
         """جلب الفواتير من فرع معين"""
-        url = f"{self.base_url}/entity/invoice/list"  # تم حذف /1
+        url = f"{self.base_url}/entity/invoice/list/1"
         params = {
             'filter[type]': EXPECTED_TYPE,
             'filter[branch_id]': branch_id,
@@ -163,19 +175,32 @@ class DaftraClient:
             'limit': PAGE_LIMIT
         }
         
+        logger.info(f"📡 طلب API: {url}")
+        logger.info(f"📋 المعاملات: {params}")
+        logger.debug(f"🔑 Headers: {self.headers}")
+        
         for attempt in range(MAX_RETRIES):
             try:
                 response = self.session.get(url, params=params, timeout=30)
                 
+                logger.info(f"📊 استجابة دفترة: {response.status_code}")
+                logger.debug(f"📄 محتوى الاستجابة: {response.text[:500]}...")
+                
                 if response.status_code == 200:
-                    return response.json()
+                    data = response.json()
+                    logger.info(f"📋 عدد الفواتير المستلمة: {len(data.get('data', []))}")
+                    return data
                 else:
-                    logger.error(f"❌ خطأ في جلب الفواتير: {response.status_code} - {response.text}")
+                    logger.error(f"❌ خطأ في جلب الفواتير: {response.status_code}")
+                    logger.error(f"📄 تفاصيل الخطأ: {response.text}")
                     
             except requests.exceptions.RequestException as e:
                 logger.error(f"❌ خطأ في الاتصال مع دفترة (محاولة {attempt + 1}): {e}")
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY)
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ خطأ في تحليل JSON: {e}")
+                logger.error(f"📄 محتوى الاستجابة: {response.text}")
                     
         return {}
 
@@ -201,8 +226,13 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         
         response_data = daftra_client.fetch_invoices(branch_id, page)
         
-        if not response_data or 'data' not in response_data:
-            logger.warning(f"⚠️ لا توجد بيانات في الصفحة {page} للفرع {branch_id}")
+        if not response_data:
+            logger.warning(f"⚠️ لا توجد استجابة من API للصفحة {page} للفرع {branch_id}")
+            break
+            
+        if 'data' not in response_data:
+            logger.warning(f"⚠️ لا يوجد مفتاح 'data' في الاستجابة للصفحة {page} للفرع {branch_id}")
+            logger.debug(f"📄 محتوى الاستجابة: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
             break
             
         invoices = response_data['data']
@@ -214,26 +244,36 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         valid_invoices = 0
         
         for invoice in invoices:
+            logger.debug(f"📋 معالجة الفاتورة: {json.dumps(invoice, indent=2, ensure_ascii=False)}")
+            
             if not DataValidator.validate_invoice(invoice):
+                logger.warning(f"⚠️ فاتورة غير صالحة: {invoice}")
                 continue
                 
             # تنظيف بيانات الفاتورة
-            cleaned_invoice = DataValidator.clean_invoice_data(invoice)
-            invoices_batch.append(cleaned_invoice)
-            valid_invoices += 1
-            
-            # معالجة بنود الفاتورة
-            items = invoice.get('items', [])
-            client_name = invoice.get('client_business_name', '')
-            
-            for item in items:
-                if DataValidator.validate_item(item):
-                    cleaned_item = DataValidator.clean_item_data(item, invoice['id'], client_name)
-                    items_batch.append(cleaned_item)
+            try:
+                cleaned_invoice = DataValidator.clean_invoice_data(invoice)
+                invoices_batch.append(cleaned_invoice)
+                valid_invoices += 1
+                logger.debug(f"✅ تم تنظيف الفاتورة: {cleaned_invoice}")
+                
+                # معالجة بنود الفاتورة
+                items = invoice.get('items', [])
+                client_name = invoice.get('client_business_name', '')
+                
+                for item in items:
+                    if DataValidator.validate_item(item):
+                        cleaned_item = DataValidator.clean_item_data(item, invoice['id'], client_name)
+                        items_batch.append(cleaned_item)
+                        logger.debug(f"✅ تم تنظيف البند: {cleaned_item}")
+                        
+            except Exception as e:
+                logger.error(f"❌ خطأ في معالجة الفاتورة {invoice.get('id', 'غير معروف')}: {e}")
+                continue
         
         logger.info(f"📋 فرع {branch_id} - صفحة {page}: {valid_invoices} فاتورة صالحة من أصل {len(invoices)}")
         stats['invoices_processed'] += valid_invoices
-        stats['items_processed'] += len([item for item in items_batch if item['invoice_id'] in [inv['id'] for inv in invoices_batch[-valid_invoices:]]])
+        stats['items_processed'] += len(items_batch)
         
         # حفظ الدفعات عند الوصول للحد الأقصى
         if len(invoices_batch) >= BATCH_SIZE:
@@ -274,13 +314,22 @@ def main():
     logger.info("🚀 بدء عملية جلب البيانات من دفترة...")
     
     # التحقق من المتغيرات المطلوبة
+    logger.info(f"🔍 التحقق من متغيرات البيئة...")
+    logger.info(f"   - DAFTRA_API_KEY: {'✅ موجود' if DAFTRA_API_KEY else '❌ مفقود'}")
+    logger.info(f"   - SUPABASE_URL: {'✅ موجود' if SUPABASE_URL else '❌ مفقود'}")
+    logger.info(f"   - SUPABASE_KEY: {'✅ موجود' if SUPABASE_KEY else '❌ مفقود'}")
+    
     if not all([DAFTRA_API_KEY, SUPABASE_URL, SUPABASE_KEY]):
         logger.error("❌ متغيرات البيئة مفقودة!")
         return
     
     # إنشاء العملاء
-    daftra_client = DaftraClient()
-    supabase_client = SupabaseClient()
+    try:
+        daftra_client = DaftraClient()
+        supabase_client = SupabaseClient()
+    except Exception as e:
+        logger.error(f"❌ خطأ في إنشاء العملاء: {e}")
+        return
     
     # إحصائيات إجمالية
     total_stats = {
@@ -303,6 +352,8 @@ def main():
                 
         except Exception as e:
             logger.error(f"❌ خطأ في معالجة الفرع {branch_id}: {e}")
+            import traceback
+            logger.error(f"📄 تفاصيل الخطأ: {traceback.format_exc()}")
     
     # التقرير النهائي
     logger.info("📊 إحصائيات المعالجة النهائية:")
