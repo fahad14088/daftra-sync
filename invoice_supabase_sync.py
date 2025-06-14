@@ -155,7 +155,7 @@ class DaftraClient:
     
     def fetch_invoices(self, branch_id: int, page: int = 1) -> Dict[str, Any]:
         """جلب الفواتير من فرع معين"""
-        url = f"{self.base_url}/entity/invoice/list/1"
+        url = f"{self.base_url}/entity/invoice/list"  # تم حذف /1
         params = {
             'filter[type]': EXPECTED_TYPE,
             'filter[branch_id]': branch_id,
@@ -170,7 +170,7 @@ class DaftraClient:
                 if response.status_code == 200:
                     return response.json()
                 else:
-                    logger.error(f"❌ خطأ في جلب الفواتير: {response.status_code}")
+                    logger.error(f"❌ خطأ في جلب الفواتير: {response.status_code} - {response.text}")
                     
             except requests.exceptions.RequestException as e:
                 logger.error(f"❌ خطأ في الاتصال مع دفترة (محاولة {attempt + 1}): {e}")
@@ -320,9 +320,9 @@ def main():
     logger.info(f"   📋 الفواتير: {total_stats['invoices_saved']} نجحت، {total_stats['invoices_failed']} فشلت")
     logger.info(f"   📝 البنود: {total_stats['items_saved']} نجح، {total_stats['items_failed']} فشل")
 
-if __name__ == "__main__":
-    main()
-    # إضافة alias للتوافق مع main.py
+# إضافة alias للتوافق مع main.py
 fetch_all = main
 
+if __name__ == "__main__":
+    main()
 
