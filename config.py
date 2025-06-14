@@ -2,7 +2,7 @@ import os
 
 BASE_URL = os.getenv("DAFTRA_URL")
 API_KEY = os.getenv("DAFTRA_APIKEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/") + "/rest/v1"
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 HEADERS_DAFTRA = {"apikey": API_KEY}
