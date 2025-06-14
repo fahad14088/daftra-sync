@@ -1,6 +1,6 @@
 import os
 
-BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftara.com/api2" )
+BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com/v2/api")
 DAFTRA_API_KEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/") + "/rest/v1"
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
