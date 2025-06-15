@@ -17,8 +17,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# إعداد المتغيرات
-BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com") + "/v2/api"
+# إعداد المتغيرات - العملاء يستخدمون api2 مو v2/api
+BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com") + "/api2"
 DAFTRA_API_KEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/") + "/rest/v1"
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -89,13 +89,14 @@ class DaftraCustomersSync:
 
     def fetch_customers_page(self, page: int = 1) -> Optional[Dict[str, Any]]:
         """جلب صفحة من العملاء من دفترة"""
-        url = f"{self.base_url}/entity/client/list/1"
+        url = f"{self.base_url}/clients"  # العملاء يستخدمون /clients مباشرة
         params = {
             'page': page,
             'limit': PAGE_LIMIT
         }
         
         logger.info(f"📄 جلب الصفحة {page} من العملاء...")
+        logger.info(f"🔗 URL: {url}")
         
         for attempt in range(3):
             try:
@@ -112,6 +113,7 @@ class DaftraCustomersSync:
                         return None
                 else:
                     logger.error(f"❌ خطأ في جلب العملاء: {response.status_code}")
+                    logger.error(f"❌ استجابة الخادم: {response.text}")
                     
             except Exception as e:
                 logger.error(f"❌ خطأ في الاتصال (محاولة {attempt + 1}): {str(e)}")
