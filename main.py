@@ -2,7 +2,8 @@
 import os
 import sys
 from products_service import sync_products
-from invoice_supabase_sync import fetch_all as sync_invoices  # استخدام كود الفواتير الجديد
+from invoice_supabase_sync import fetch_all as sync_invoices
+from customers_sync import DaftraCustomersSync
 
 def main():
     print(f"🔄 مزامنة المنتجات... URL={os.getenv('DAFTRA_URL')}")
@@ -12,6 +13,11 @@ def main():
     print(f"🔄 مزامنة الفواتير... SUPABASE={os.getenv('SUPABASE_URL')}")
     r2 = sync_invoices()
     print(f"✅ الفواتير: {r2['invoices']} فاتورة، {r2['items']} بند")
+    
+    print(f"🔄 مزامنة العملاء...")
+    customers_sync = DaftraCustomersSync()
+    r3 = customers_sync.sync_customers()
+    print(f"✅ العملاء: {r3['customers_saved']} عميل")
 
 if __name__ == '__main__':
     try:
