@@ -252,7 +252,7 @@ def main():
         # التحقق من المتغيرات المطلوبة
         if not all([DAFTRA_API_KEY, SUPABASE_URL, SUPABASE_KEY]):
             logger.error("❌ متغيرات البيئة مفقودة!")
-            return
+            return {'customers_saved': 0, 'customers_processed': 0, 'customers_failed': 0, 'error': 'متغيرات البيئة مفقودة'}
         
         # إنشاء مثيل المزامنة وتشغيلها
         sync = DaftraCustomersSync()
@@ -260,13 +260,15 @@ def main():
         
         print(f"✅ تم الانتهاء! العملاء المحفوظين: {stats['customers_saved']}")
         
+        return stats
+        
     except Exception as e:
         logger.error(f"❌ خطأ عام: {str(e)}")
         print(f"❌ خطأ عام: {str(e)}")
+        return {'customers_saved': 0, 'customers_processed': 0, 'customers_failed': 0, 'error': str(e)}
 
 if __name__ == "__main__":
     main()
 
 # إضافة alias للتوافق مع main.py
 fetch_all = main
-
