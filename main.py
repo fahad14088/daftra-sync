@@ -3,7 +3,7 @@ import os
 import sys
 from products_service import sync_products
 from invoice_supabase_sync import fetch_all as sync_invoices
-from customers_sync import DaftraCustomersSync
+from customers_sync import main as sync_customers  # دالة مباشرة زي الباقي
 
 def main():
     print(f"🔄 مزامنة المنتجات... URL={os.getenv('DAFTRA_URL')}")
@@ -15,8 +15,7 @@ def main():
     print(f"✅ الفواتير: {r2['invoices']} فاتورة، {r2['items']} بند")
     
     print(f"🔄 مزامنة العملاء...")
-    customers_sync = DaftraCustomersSync()
-    r3 = customers_sync.sync_customers()
+    r3 = sync_customers()  # دالة مباشرة
     print(f"✅ العملاء: {r3['customers_saved']} عميل")
 
 if __name__ == '__main__':
