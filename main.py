@@ -3,7 +3,6 @@ import os
 import sys
 from products_service import sync_products
 from invoice_supabase_sync import fetch_all as sync_invoices
-from customers_sync import main as sync_customers
 
 def main():
     print(f"🔄 مزامنة المنتجات... URL={os.getenv('DAFTRA_URL')}")
@@ -16,6 +15,7 @@ def main():
     
     try:
         print(f"🔄 مزامنة العملاء...")
+        from customers_sync import main as sync_customers  # استيراد داخلي
         r3 = sync_customers()
         print(f"✅ العملاء: {r3['customers_saved']} عميل")
     except Exception as e:
@@ -29,4 +29,3 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"❌ خطأ عام: {e}")
         sys.exit(1)
-
