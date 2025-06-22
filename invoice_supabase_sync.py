@@ -62,6 +62,7 @@ class DataValidator:
         """تنظيف وتحويل بيانات الفاتورة - أسماء الحقول الصحيحة"""
         cleaned = {
             'id': str(invoice.get('id', '')),
+            "invoice_id": str(invoice.get("id", "")) # إضافة عمود invoice_id هنا
             'invoice_no': str(invoice.get('no', '')),
             'invoice_date': DataValidator.format_date(invoice.get('date')),
             'customer_id': str(invoice.get('client_id', '')),
