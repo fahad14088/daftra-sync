@@ -81,6 +81,7 @@ class DataValidator:
         """تنظيف وتحويل بيانات البند - أسماء الحقول الصحيحة"""
         cleaned = {
             'id': str(item.get('id', '')),
+            'invoice_no': str(invoice.get('no', '')),
             'invoice_id': str(invoice_id),
             'quantity': float(item.get('quantity', 0)),
             'unit_price': float(item.get('unit_price', 0)),
