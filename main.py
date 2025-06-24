@@ -2,7 +2,7 @@
 import os
 import sys
 from products_service import sync_products
-from invoice_supabase_sync import fetch_all as sync_invoices
+from invoice_supabase_sync import fetch_all as sync_invoices, fetch_missing_items
 
 def main():
     print(f"🔄 مزامنة المنتجات... URL={os.getenv('DAFTRA_URL')}")
@@ -12,6 +12,19 @@ def main():
     print(f"🔄 مزامنة الفواتير... SUPABASE={os.getenv('SUPABASE_URL')}")
     r2 = sync_invoices()
     print(f"✅ الفواتير: {r2['invoices']} فاتورة، {r2['items']} بند")
+    
+    # *** إضافة جلب البنود المفقودة ***
+    print(f"🔍 البحث عن البنود المفقودة...")
+    try:
+        from invoice_supabase_sync import DaftraClient, SupabaseClient, fetch_missing_items
+        
+        daftra_client = DaftraClient()
+        supabase_client = SupabaseClient()
+        missing_stats = fetch_missing_items(daftra_client, supabase_client)
+        
+        print(f"✅ البنود المفقودة: {missing_stats['items_saved']} تم جلبها")
+    except Exception as e:
+        print(f"❌ خطأ في البنود المفقودة: {e}")
     
     try:
         print(f"🔄 مزامنة العملاء...")
