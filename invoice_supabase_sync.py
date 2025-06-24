@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 import os
 
 # إعداد المتغيرات مباشرة
-BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com" ) + "/v2/api"
+BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com") + "/v2/api"
 DAFTRA_API_KEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/") + "/rest/v1"
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -33,7 +33,7 @@ RETRY_DELAY = 2
 
 # إعداد نظام التسجيل
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler('daftra_sync.log', encoding='utf-8'),
@@ -41,6 +41,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
 
 class DataValidator:
     """فئة للتحقق من صحة البيانات قبل الإرسال"""
@@ -62,7 +63,7 @@ class DataValidator:
         """تنظيف وتحويل بيانات الفاتورة - أسماء الحقول الصحيحة"""
         cleaned = {
             'id': str(invoice.get('id', '')),
-            "invoice_id": str(invoice.get("id", "")), # إضافة عمود invoice_id هنا
+            "invoice_id": str(invoice.get("id", "")),  # إضافة عمود invoice_id هنا
             'invoice_no': str(invoice.get('no', '')),
             'invoice_date': DataValidator.format_date(invoice.get('date')),
             'customer_id': str(invoice.get('client_id', '')),
@@ -112,6 +113,7 @@ class DataValidator:
             return str(date_str)
         except Exception:
             return None
+
 
 class SupabaseClient:
     """عميل محسن للتعامل مع Supabase"""
@@ -163,6 +165,7 @@ class SupabaseClient:
                     time.sleep(RETRY_DELAY)
                     
         return 0, len(data)
+
 
 class DaftraClient:
     """عميل محسن للتعامل مع API دفترة"""
@@ -218,6 +221,76 @@ class DaftraClient:
                     time.sleep(RETRY_DELAY)
                     
         return {}
+
+
+def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseClient) -> Dict[str, int]:
+    """جلب البنود المفقودة للفواتير الموجودة بدون بنود"""
+    logger.info("🔍 البحث عن الفواتير بدون بنود...")
+    
+    stats = {'items_saved': 0, 'items_failed': 0}
+    
+    try:
+        # جلب الفواتير اللي ماها بنود
+        invoices_url = f"{supabase_client.base_url}/invoices?select=id,client_business_name"
+        invoices_response = supabase_client.session.get(invoices_url)
+        
+        if invoices_response.status_code != 200:
+            return stats
+            
+        all_invoices = invoices_response.json()
+        missing_invoices = []
+        
+        for invoice in all_invoices:
+            invoice_id = invoice['id']
+            items_url = f"{supabase_client.base_url}/invoice_items?invoice_id=eq.{invoice_id}&select=id&limit=1"
+            items_response = supabase_client.session.get(items_url)
+            
+            if items_response.status_code == 200:
+                items = items_response.json()
+                if len(items) == 0:
+                    missing_invoices.append(invoice)
+        
+        logger.info(f"🔍 وُجد {len(missing_invoices)} فاتورة بدون بنود")
+        
+        if not missing_invoices:
+            return stats
+        
+        items_batch = []
+        
+        for invoice in missing_invoices:
+            invoice_id = invoice['id']
+            client_name = invoice.get('client_business_name', '')
+            
+            invoice_details = daftra_client.fetch_invoice_details(invoice_id)
+            
+            if not invoice_details:
+                continue
+            
+            items = invoice_details.get('invoice_item', [])
+            
+            for item in items:
+                if DataValidator.validate_item(item):
+                    cleaned_item = DataValidator.clean_item_data(item, invoice_id, client_name)
+                    items_batch.append(cleaned_item)
+            
+            if len(items_batch) >= BATCH_SIZE:
+                saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
+                stats['items_saved'] += saved
+                stats['items_failed'] += failed
+                items_batch = []
+        
+        if items_batch:
+            saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
+            stats['items_saved'] += saved
+            stats['items_failed'] += failed
+        
+        logger.info(f"✅ تم جلب {stats['items_saved']} بند مفقود")
+        
+    except Exception as e:
+        logger.error(f"❌ خطأ في جلب البنود المفقودة: {e}")
+    
+    return stats
+
 
 def process_branch_invoices(daftra_client: DaftraClient, supabase_client: SupabaseClient, branch_id: int) -> Dict[str, int]:
     """معالجة فواتير فرع واحد"""
@@ -311,9 +384,9 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         page += 1
         
         # حماية من الحلقات اللانهائية
-      #  if page > 100:
-       #     logger.warning(f"⚠️ تم الوصول للحد الأقصى من الصفحات للفرع {branch_id}")
-        #    break
+        # if page > 100:
+        #     logger.warning(f"⚠️ تم الوصول للحد الأقصى من الصفحات للفرع {branch_id}")
+        #     break
     
     # حفظ الدفعات المتبقية - الفواتير أولاً
     if invoices_batch:
@@ -332,6 +405,7 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
     
     logger.info(f"📊 إحصائيات الفرع {branch_id}: {stats['invoices_processed']} فاتورة، {stats['items_processed']} بند")
     return stats
+
 
 def main():
     """الدالة الرئيسية"""
@@ -383,83 +457,10 @@ def main():
     logger.info("🎉 انتهاء العملية - التقرير النهائي:")
     logger.info(f"   📋 الفواتير: {total_stats['invoices_saved']} نجحت، {total_stats['invoices_failed']} فشلت")
     logger.info(f"   📝 البنود: {total_stats['items_saved']} نجح، {total_stats['items_failed']} فشل")
-    def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseClient) -> Dict[str, int]:
-    """جلب البنود المفقودة للفواتير الموجودة بدون بنود"""
-    logger.info("🔍 البحث عن الفواتير بدون بنود...")
-    
-    stats = {'items_saved': 0, 'items_failed': 0}
-    
-    try:
-        # جلب الفواتير اللي ماها بنود
-        invoices_url = f"{supabase_client.base_url}/invoices?select=id,client_business_name"
-        invoices_response = supabase_client.session.get(invoices_url)
-        
-        if invoices_response.status_code != 200:
-            return stats
-            
-        all_invoices = invoices_response.json()
-        missing_invoices = []
-        
-        for invoice in all_invoices:
-            invoice_id = invoice['id']
-            items_url = f"{supabase_client.base_url}/invoice_items?invoice_id=eq.{invoice_id}&select=id&limit=1"
-            items_response = supabase_client.session.get(items_url)
-            
-            if items_response.status_code == 200:
-                items = items_response.json()
-                if len(items) == 0:
-                    missing_invoices.append(invoice)
-        
-        logger.info(f"🔍 وُجد {len(missing_invoices)} فاتورة بدون بنود")
-        
-        if not missing_invoices:
-            return stats
-        
-        items_batch = []
-        
-        for invoice in missing_invoices:
-            invoice_id = invoice['id']
-            client_name = invoice.get('client_business_name', '')
-            
-            invoice_details = daftra_client.fetch_invoice_details(invoice_id)
-            
-            if not invoice_details:
-                continue
-            
-            items = invoice_details.get('invoice_item', [])
-            
-            for item in items:
-                if DataValidator.validate_item(item):
-                    cleaned_item = DataValidator.clean_item_data(item, invoice_id, client_name)
-                    items_batch.append(cleaned_item)
-            
-            if len(items_batch) >= BATCH_SIZE:
-                saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
-                stats['items_saved'] += saved
-                stats['items_failed'] += failed
-                items_batch = []
-        
-        if items_batch:
-            saved, failed = supabase_client.upsert_batch('invoice_items', items_batch)
-            stats['items_saved'] += saved
-            stats['items_failed'] += failed
-        
-        logger.info(f"✅ تم جلب {stats['items_saved']} بند مفقود")
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في جلب البنود المفقودة: {e}")
-    
-    return stats
+
 
 # إضافة alias للتوافق مع main.py
 fetch_all = main
 
 if __name__ == "__main__":
     main()
-
-# إضافة alias للتوافق مع main.py
-fetch_all = main
-
-if __name__ == "__main__":
-    main()
-
