@@ -116,10 +116,13 @@ def fix_invoice_items_using_product_id():
 
     product_map = {}
     for p in res.json():
-        pid = str(p.get("product_id", "")).strip()
-        code = p.get("product_code", "").strip()
-        if pid and code:
-            product_map[pid] = code
+        try:
+            pid = int(p.get("product_id"))
+            code = p.get("product_code", "").strip()
+            if pid and code:
+                product_map[pid] = code
+        except:
+            continue
 
     print(f"📦 عدد المنتجات المحملة: {len(product_map)}")
 
@@ -143,7 +146,16 @@ def fix_invoice_items_using_product_id():
 
         for row in batch:
             item_id = row["id"]
-            pid = str(row.get("product_id", "")).strip()
+            pid_raw = row.get("product_id")
+
+            if pid_raw is None:
+                continue
+
+            try:
+                pid = int(pid_raw)
+            except:
+                continue
+
             old_code = row.get("product_code", "").strip()
 
             if pid in product_map:
@@ -161,7 +173,7 @@ def fix_invoice_items_using_product_id():
             else:
                 total_not_found += 1
                 print(f"⚠️ لم يتم العثور على product_id={pid} في جدول المنتجات لرقم البند {item_id}")
-                مشابهة = [k for k in product_map if pid in k or k in pid]
+                مشابهة = [k for k in product_map if str(pid) in str(k) or str(k) in str(pid)]
                 if مشابهة:
                     print(f"🔍 مفاتيح مشابهة مقترحة: {مشابهة}")
                 else:
