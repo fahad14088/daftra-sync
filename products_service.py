@@ -141,16 +141,8 @@ def fix_invoice_items_using_product_id():
         print(f"🔍 فحص {len(batch)} بند من offset={offset}")
         for row in batch:
             item_id = row["id"]
-            pid_raw = row.get("product_id", "")
-            pid = str(pid_raw).strip()
-
-            # تطابق قوي جدًا بين المفتاح والـ pid حتى لو كان int أو str أو فيه فراغ
-            actual_code = product_map.get(pid)
-            if not actual_code:
-                for key in product_map:
-                    if str(key).strip() == pid:
-                        actual_code = product_map[key]
-                        break
+            pid = str(row.get("product_id", "")).strip()
+            actual_code = product_map.get(pid)  # ✅ الطريقة الصحيحة بدون لف ودوران
 
             if actual_code:
                 patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
@@ -161,9 +153,6 @@ def fix_invoice_items_using_product_id():
                     total_updated += 1
             else:
                 print(f"⚠️ لم يتم العثور على كود لـ product_id={pid}")
-                مشابهة = [k for k in product_map if pid in k or k in pid or k.strip() == pid.strip()]
-                if مشابهة:
-                    print(f"🔎 مفاتيح مشابهة موجودة: {مشابهة}")
 
         offset += limit
         time.sleep(0.5)
