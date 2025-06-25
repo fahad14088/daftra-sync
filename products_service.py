@@ -95,3 +95,54 @@ def sync_products():
 
     print(f"✅ Done sync_products: {total} records")
     return {"synced": total}
+
+
+def fix_invoice_items_using_product_id():
+    print("🔧 تصحيح كود المنتج في البنود باستخدام product_id...")
+
+    url_products = f"{SUPABASE_URL}/rest/v1/products?select=product_id,product_code"
+    res = requests.get(url_products, headers=HEADERS_SB)
+    if res.status_code != 200:
+        print("❌ فشل في جلب المنتجات")
+        return
+
+    product_map = {
+        str(p["product_id"]).strip(): p["product_code"]
+        for p in res.json()
+        if p.get("product_id") and p.get("product_code")
+    }
+
+    limit = 1000
+    offset = 0
+    total_updated = 0
+
+    while True:
+        url_items = f"{SUPABASE_URL}/rest/v1/invoice_items?select=id,product_id&limit={limit}&offset={offset}"
+        res = requests.get(url_items, headers=HEADERS_SB)
+        if res.status_code != 200:
+            print("❌ فشل في جلب البنود")
+            break
+
+        batch = res.json()
+        if not batch:
+            break
+
+        print(f"🔍 فحص {len(batch)} بند من offset={offset}")
+        for row in batch:
+            item_id = row["id"]
+            pid = str(row.get("product_id", "")).strip()
+            actual_code = product_map.get(pid)
+            if actual_code:
+                patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
+                patch_payload = {"product_code": actual_code}
+                res_patch = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
+                print(f"🔄 تحديث بند {item_id} → {res_patch.status_code}")
+                if res_patch.status_code in [200, 204]:
+                    total_updated += 1
+            else:
+                print(f"⚠️ لم يتم العثور على كود لـ product_id={pid}")
+
+        offset += limit
+        time.sleep(0.5)
+
+    print(f"✅ تم تحديث {total_updated} بند بنجاح.")
