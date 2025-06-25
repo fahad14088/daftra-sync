@@ -81,10 +81,12 @@ def sync_products():
 
             print(">> upsert product:", payload)
             resp = requests.post(
-                f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id&prefer=resolution=merge-duplicates",
-                headers=HEADERS_SB,
-                json=payload,
-                timeout=10
+            f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
+            headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates"},
+            json=payload,
+            timeout=10
+           )
+ 
             )
             print(f"   → {resp.status_code} | {resp.text}")
             if resp.status_code in (200, 201):
