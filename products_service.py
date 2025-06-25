@@ -71,7 +71,7 @@ def sync_products():
 
             print(">> upsert product:", payload)
             resp = requests.post(
-                f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
+                f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id&prefer=resolution=merge-duplicates",
                 headers=HEADERS_SB,
                 json=payload,
                 timeout=10
