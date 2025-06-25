@@ -103,7 +103,8 @@ def sync_products():
 
     return {"synced": total}
 
- def fix_invoice_items_using_product_id():
+
+def fix_invoice_items_using_product_id():
     print("🔧 تصحيح كود المنتج في البنود باستخدام product_id...")
 
     url_products = f"{SUPABASE_URL}/rest/v1/products?select=product_id,product_code"
@@ -112,7 +113,7 @@ def sync_products():
         print("❌ فشل في جلب المنتجات")
         return
 
-    # بناء القاموس
+    # بناء قاموس المنتجات
     product_map = {}
     for p in res.json():
         pid = str(p.get("product_id", "")).strip()
@@ -142,7 +143,6 @@ def sync_products():
             item_id = row["id"]
             pid = str(row.get("product_id", "")).strip()
 
-            # نبحث يدويًا بتطابق قوي
             actual_code = None
             for key in product_map:
                 if key.strip() == pid:
@@ -158,8 +158,7 @@ def sync_products():
                     total_updated += 1
             else:
                 print(f"⚠️ لم يتم العثور على كود لـ product_id={pid}")
-                # نطبع المفاتيح المشابهة للمساعدة في التشخيص
-                مشابهة = [k for k in product_map if pid in k or k in pid]
+                مشابهة = [k for k in product_map if pid in k or k in pid or k.strip() == pid.strip()]
                 if مشابهة:
                     print(f"🔎 مفاتيح مشابهة موجودة: {مشابهة}")
 
