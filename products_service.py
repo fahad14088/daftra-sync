@@ -44,7 +44,6 @@ def sync_products():
             break
 
         for raw in items:
-            # فك التغليف لو جاي بالشكل {"Product": { ... }}
             prod = raw.get("Product") if isinstance(raw, dict) and "Product" in raw else raw
 
             pid = prod.get("id")
@@ -52,7 +51,6 @@ def sync_products():
                 print("! skipping item without id:", prod)
                 continue
 
-            # استخرج الكود من أي حقل متوفر
             code = (
                 prod.get("code")
                 or prod.get("product_code")
@@ -61,6 +59,7 @@ def sync_products():
             )
 
             payload = {
+                "id": str(pid),  # 🔄 نستخدم id كـ product_id النهائي
                 "daftra_product_id": str(pid),
                 "product_code":       code,
                 "name":               prod.get("name", ""),
@@ -73,7 +72,7 @@ def sync_products():
 
             print(">> upsert product:", payload)
             resp = requests.post(
-                f"{SUPABASE_URL}/rest/v1/products?on_conflict=daftra_product_id",
+                f"{SUPABASE_URL}/rest/v1/products?on_conflict=id",
                 headers=HEADERS_SB,
                 json=payload,
                 timeout=10
@@ -89,25 +88,25 @@ def sync_products():
     return {"synced": total}
 
 
-def fix_invoice_items_based_on_product_name():
-    """تصحيح كود المنتج في البنود إذا كان مكتوب فيه الاسم بدلاً من الكود"""
-    print("🔧 بدء تصحيح البنود في جدول invoice_items حسب الاسم الموجود في product_code...")
+def fix_invoice_items_using_product_id():
+    """تحديث كود المنتج داخل invoice_items بناءً على product_id"""
+    print("🔧 تصحيح كود المنتج في البنود باستخدام product_id...")
 
-    # 1. جلب المنتجات من Supabase
-    url_products = f"{SUPABASE_URL}/rest/v1/products?select=name,product_code"
+    # 1. جلب المنتجات: id → product_code
+    url_products = f"{SUPABASE_URL}/rest/v1/products?select=id,product_code"
     res = requests.get(url_products, headers=HEADERS_SB)
     if res.status_code != 200:
         print("❌ فشل في جلب المنتجات")
         return
 
     product_map = {
-        p["name"].strip(): p["product_code"]
+        str(p["id"]).strip(): p["product_code"]
         for p in res.json()
-        if p.get("name") and p.get("product_code")
+        if p.get("id") and p.get("product_code")
     }
 
-    # 2. جلب البنود من Supabase
-    url_items = f"{SUPABASE_URL}/rest/v1/invoice_items?select=id,product_code"
+    # 2. جلب البنود: id و product_id
+    url_items = f"{SUPABASE_URL}/rest/v1/invoice_items?select=id,product_id"
     res = requests.get(url_items, headers=HEADERS_SB)
     if res.status_code != 200:
         print("❌ فشل في جلب البنود")
@@ -116,13 +115,15 @@ def fix_invoice_items_based_on_product_name():
     updated = []
     for row in res.json():
         item_id = row["id"]
-        current_value = (row.get("product_code") or "").strip()
-        actual_code = product_map.get(current_value)
+        pid = str(row.get("product_id", "")).strip()
+        actual_code = product_map.get(pid)
         if actual_code:
             updated.append({
                 "id": item_id,
                 "product_code": actual_code
             })
+        else:
+            print(f"⚠️ لم يتم العثور على كود لـ product_id={pid}")
 
     if not updated:
         print("✅ لا توجد بنود بحاجة تصحيح.")
@@ -139,4 +140,4 @@ def fix_invoice_items_based_on_product_name():
 
 if __name__ == "__main__":
     sync_products()
-    fix_invoice_items_based_on_product_name()
+    fix_invoice_items_using_product_id()
