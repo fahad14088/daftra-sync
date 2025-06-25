@@ -98,10 +98,11 @@ def fix_invoice_items_using_product_id():
         print("❌ فشل في جلب المنتجات")
         return
 
+    # ✅ التعديل هنا
     product_map = {
         str(p["product_id"]).strip(): p["product_code"]
         for p in res.json()
-        if p.get("product_id") and p.get("product_code")
+        if p.get("product_id") and str(p.get("product_code", "")).strip() != ""
     }
 
     # 2. جلب البنود باستخدام pagination
