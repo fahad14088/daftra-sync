@@ -128,6 +128,7 @@ def fix_invoice_items_using_product_id():
     offset = 0
     total_updated = 0
     total_skipped = 0
+    total_not_found = 0
 
     while True:
         url_items = f"{SUPABASE_URL}/rest/v1/invoice_items?select=id,product_id,product_code&limit={limit}&offset={offset}"
@@ -151,19 +152,23 @@ def fix_invoice_items_using_product_id():
                     patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
                     patch_payload = {"product_code": new_code}
                     res_patch = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
-                    print(f"✅ تحديث بند {item_id}: {pid} → {new_code} → {res_patch.status_code}")
+                    print(f"✅ تحديث بند {item_id}: {pid} → {old_code} ← {new_code} → {res_patch.status_code}")
                     if res_patch.status_code in [200, 204]:
                         total_updated += 1
                 else:
                     print(f"⏩ تم التجاهل (نفس الكود): بند {item_id} ← {pid} ← {old_code}")
                     total_skipped += 1
             else:
-                print(f"⚠️ لم يتم العثور على product_id={pid} في جدول المنتجات")
+                total_not_found += 1
+                print(f"⚠️ لم يتم العثور على product_id={pid} في جدول المنتجات لرقم البند {item_id}")
                 مشابهة = [k for k in product_map if pid in k or k in pid]
                 if مشابهة:
-                    print(f"🔍 مفاتيح مشابهة: {مشابهة}")
+                    print(f"🔍 مفاتيح مشابهة مقترحة: {مشابهة}")
+                else:
+                    print("🚫 لا يوجد مفاتيح مشابهة")
 
         offset += limit
 
     print(f"\n✅ تم تحديث {total_updated} بند")
     print(f"⏩ تم تجاهل {total_skipped} بند لأنه محدث مسبقاً")
+    print(f"⚠️ عدد البنود التي لم يتم العثور على المنتج لها: {total_not_found}")
