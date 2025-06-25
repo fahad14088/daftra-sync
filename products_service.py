@@ -116,13 +116,10 @@ def fix_invoice_items_using_product_id():
 
     product_map = {}
     for p in res.json():
-        try:
-            pid = int(p["product_id"])
-            code = p.get("product_code", "").strip()
-            if code:
-                product_map[pid] = code
-        except:
-            continue
+        pid = str(p.get("product_id")).strip()
+        code = p.get("product_code", "").strip()
+        if pid and code:
+            product_map[pid] = code
 
     print(f"📦 عدد المنتجات المحملة: {len(product_map)}")
 
@@ -146,14 +143,11 @@ def fix_invoice_items_using_product_id():
 
         for row in batch:
             item_id = row["id"]
-            pid_raw = row.get("product_id")
-
-            try:
-                pid = int(pid_raw)
-            except:
-                continue
-
+            pid = str(row.get("product_id")).strip()
             old_code = row.get("product_code", "").strip()
+
+            if not pid:
+                continue
 
             if pid in product_map:
                 new_code = product_map[pid]
@@ -161,7 +155,7 @@ def fix_invoice_items_using_product_id():
                     patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
                     patch_payload = {"product_code": new_code}
                     res_patch = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
-                    print(f"✅ تحديث بند {item_id}: {pid} ← {old_code} ← {new_code} → {res_patch.status_code}")
+                    print(f"✅ تحديث بند {item_id}: {pid} → {old_code} ← {new_code} → {res_patch.status_code}")
                     if res_patch.status_code in [200, 204]:
                         total_updated += 1
                 else:
@@ -170,6 +164,11 @@ def fix_invoice_items_using_product_id():
             else:
                 total_not_found += 1
                 print(f"⚠️ لم يتم العثور على product_id={pid} في جدول المنتجات لرقم البند {item_id}")
+                مشابهة = [k for k in product_map if str(pid) in str(k) or str(k) in str(pid)]
+                if مشابهة:
+                    print(f"🔍 مفاتيح مشابهة مقترحة: {مشابهة}")
+                else:
+                    print("🚫 لا يوجد مفاتيح مشابهة")
 
         offset += limit
 
