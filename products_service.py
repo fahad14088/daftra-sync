@@ -40,7 +40,8 @@ def safe_text(value):
 
 
 def sync_products():
-    total = 0
+    created_count = 0
+    updated_count = 0
     page = 1
     limit = 50
 
@@ -81,20 +82,25 @@ def sync_products():
 
             print(">> upsert product:", payload)
             resp = requests.post(
-            f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
-            headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates"},
-            json=payload,
-            timeout=10
-           )
- 
+                f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
+                headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates"},
+                json=payload,
+                timeout=10
+            )
             print(f"   → {resp.status_code} | {resp.text}")
-            if resp.status_code in (200, 201):
-                total += 1
+            if resp.status_code == 201:
+                created_count += 1
+            elif resp.status_code == 200:
+                updated_count += 1
 
         page += 1
         time.sleep(1)
 
-    print(f"✅ Done sync_products: {total} records")
+    total = created_count + updated_count
+    print(f"\n✅ تم رفع {created_count} منتج جديد")
+    print(f"🔁 تم تحديث {updated_count} منتج موجود")
+    print(f"📦 الإجمالي: {total} منتج\n")
+
     return {"synced": total}
 
 
