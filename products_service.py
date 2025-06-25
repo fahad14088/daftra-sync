@@ -141,13 +141,16 @@ def fix_invoice_items_using_product_id():
         print(f"🔍 فحص {len(batch)} بند من offset={offset}")
         for row in batch:
             item_id = row["id"]
-            pid = str(row.get("product_id", "")).strip()
+            pid_raw = row.get("product_id", "")
+            pid = str(pid_raw).strip()
 
-            actual_code = None
-            for key in product_map:
-                if key.strip() == pid:
-                    actual_code = product_map[key]
-                    break
+            # تطابق قوي جدًا بين المفتاح والـ pid حتى لو كان int أو str أو فيه فراغ
+            actual_code = product_map.get(pid)
+            if not actual_code:
+                for key in product_map:
+                    if str(key).strip() == pid:
+                        actual_code = product_map[key]
+                        break
 
             if actual_code:
                 patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
