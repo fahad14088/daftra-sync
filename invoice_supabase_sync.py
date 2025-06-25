@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 import os
 
 # إعداد المتغيرات مباشرة
-BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com" ) + "/v2/api"
+BASE_URL = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com") + "/v2/api"
 DAFTRA_API_KEY = os.getenv("DAFTRA_APIKEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/") + "/rest/v1"
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -79,45 +79,16 @@ class DataValidator:
         return cleaned
     
     @staticmethod
-    def clean_item_data(item: Dict[str, Any], invoice_id: str, client_name: str, 
-                        product_name_to_code_map: Dict[str, str], valid_product_codes: set) -> Dict[str, Any]:
-        """
-        تنظيف وتحويل بيانات البند - أسماء الحقول الصحيحة.
-        يصحح product_code و product_name بناءً على خرائط المنتجات.
-        """
-        daftra_item_description = str(item.get('item', '')) # هذا هو الحقل الذي قد يحتوي على الاسم أو الكود
-        
-        product_code_to_use = None
-        product_name_to_use = daftra_item_description # مبدئياً، اسم المنتج هو الوصف
-        
-        # 1. محاولة مطابقة الوصف باسم منتج معروف
-        if daftra_item_description in product_name_to_code_map:
-            product_code_to_use = product_name_to_code_map[daftra_item_description]
-            product_name_to_use = daftra_item_description # الاسم هو الوصف الأصلي
-        # 2. إذا لم يطابق اسمًا، فربما الوصف نفسه هو كود منتج معروف
-        elif daftra_item_description in valid_product_codes:
-            product_code_to_use = daftra_item_description
-            # حاول البحث عن اسمه المقابل من الخريطة
-            found_name = next((name for name, code in product_name_to_code_map.items() if code == daftra_item_description), None)
-            if found_name:
-                product_name_to_use = found_name
-            else:
-                product_name_to_use = f"منتج بكود: {daftra_item_description}" # اسم افتراضي إذا لم يتم العثور على اسم مطابق
-        # 3. إذا لم يتم العثور على تطابق (لا اسم ولا كود معروف)
-        else:
-            # استخدم الوصف كما هو ككود، وسجل تحذيرًا
-            product_code_to_use = daftra_item_description
-            logger.warning(f"⚠️ لم يتم العثور على كود منتج معروف للوصف: '{daftra_item_description}'. سيتم استخدام الوصف ككود.")
-
+    def clean_item_data(item: Dict[str, Any], invoice_id: str, client_name: str) -> Dict[str, Any]:
+        """تنظيف وتحويل بيانات البند - أسماء الحقول الصحيحة"""
         cleaned = {
             'id': str(item.get('id', '')),
             'invoice_id': str(invoice_id),
             'quantity': float(item.get('quantity', 0)),
             'unit_price': float(item.get('unit_price', 0)),
             'subtotal': float(item.get('subtotal', 0)),
-            # 'product_id': str(item.get('product_id', '')), # هذا الحقل لم يعد يستخدم كـ product_code
-            'product_code': product_code_to_use[:50], # ✅ استخدم الكود الذي تم تحديده
-            'product_name': product_name_to_use[:255], # ✅ أضف اسم المنتج
+            'product_id': str(item.get('product_id', '')),
+            'product_code': str(item.get('item', ''))[:50],
             'client_business_name': str(client_name)[:255],
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat()
@@ -195,40 +166,6 @@ class SupabaseClient:
                     
         return 0, len(data)
 
-    def fetch_all_products(self) -> List[Dict[str, Any]]:
-        """جلب جميع المنتجات من جدول products في Supabase"""
-        logger.info("🔍 جلب جميع المنتجات من Supabase...")
-        all_products = []
-        offset = 0
-        limit = 1000 # يمكن تعديل الحد الأقصى للصفحة حسب الحاجة
-
-        while True:
-            url = f"{self.base_url}/products?select=product_code,name&offset={offset}&limit={limit}"
-            for attempt in range(MAX_RETRIES):
-                try:
-                    response = self.session.get(url, timeout=30)
-                    if response.status_code == 200:
-                        products_page = response.json()
-                        if not products_page:
-                            break # لا توجد المزيد من المنتجات
-                        all_products.extend(products_page)
-                        if len(products_page) < limit:
-                            break # تم جلب جميع المنتجات
-                        offset += limit
-                        break # الخروج من محاولات إعادة المحاولة والانتقال للصفحة التالية
-                    else:
-                        logger.error(f"❌ خطأ في جلب المنتجات من Supabase: {response.status_code} - {response.text}")
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"❌ خطأ في الاتصال بـ Supabase لجلب المنتجات (محاولة {attempt + 1}): {e}")
-                    if attempt < MAX_RETRIES - 1:
-                        time.sleep(RETRY_DELAY)
-            else: # إذا فشلت جميع المحاولات
-                logger.error("❌ فشل جلب جميع المنتجات من Supabase بعد عدة محاولات.")
-                break
-        
-        logger.info(f"✅ تم جلب {len(all_products)} منتج من Supabase.")
-        return all_products
-
 
 class DaftraClient:
     """عميل محسن للتعامل مع API دفترة"""
@@ -286,8 +223,7 @@ class DaftraClient:
         return {}
 
 
-def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseClient, 
-                        product_name_to_code_map: Dict[str, str], valid_product_codes: set) -> Dict[str, int]:
+def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseClient) -> Dict[str, int]:
     """جلب البنود المفقودة للفواتير الموجودة بدون بنود"""
     logger.info("🔍 البحث عن الفواتير بدون بنود...")
     
@@ -334,8 +270,7 @@ def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseCl
             
             for item in items:
                 if DataValidator.validate_item(item):
-                    # ✅ تمرير خرائط المنتجات إلى clean_item_data
-                    cleaned_item = DataValidator.clean_item_data(item, invoice_id, client_name, product_name_to_code_map, valid_product_codes)
+                    cleaned_item = DataValidator.clean_item_data(item, invoice_id, client_name)
                     items_batch.append(cleaned_item)
             
             if len(items_batch) >= BATCH_SIZE:
@@ -357,8 +292,7 @@ def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseCl
     return stats
 
 
-def process_branch_invoices(daftra_client: DaftraClient, supabase_client: SupabaseClient, branch_id: int, 
-                            product_name_to_code_map: Dict[str, str], valid_product_codes: set) -> Dict[str, int]:
+def process_branch_invoices(daftra_client: DaftraClient, supabase_client: SupabaseClient, branch_id: int) -> Dict[str, int]:
     """معالجة فواتير فرع واحد"""
     logger.info(f"🏢 بدء معالجة الفرع {branch_id}")
     
@@ -418,8 +352,7 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
                 
                 for item in items:
                     if DataValidator.validate_item(item):
-                        # ✅ تمرير خرائط المنتجات إلى clean_item_data
-                        cleaned_item = DataValidator.clean_item_data(item, invoice['id'], client_name, product_name_to_code_map, valid_product_codes)
+                        cleaned_item = DataValidator.clean_item_data(item, invoice['id'], client_name)
                         items_batch.append(cleaned_item)
                         
             except Exception as e:
@@ -486,25 +419,6 @@ def main():
     # إنشاء العملاء
     daftra_client = DaftraClient()
     supabase_client = SupabaseClient()
-
-    # ✅ الخطوة الجديدة: جلب المنتجات وبناء خريطة البحث
-    all_products_from_supabase = supabase_client.fetch_all_products()
-    
-    # خريطة لربط اسم المنتج بكود المنتج
-    product_name_to_code_map = {}
-    # مجموعة تحتوي على جميع أكواد المنتجات المعروفة (للتأكد إذا كان الوصف هو كود)
-    valid_product_codes = set() 
-
-    for product in all_products_from_supabase:
-        name = product.get('name')
-        code = product.get('product_code')
-        if name and code:
-            product_name_to_code_map[name] = code
-        if code:
-            valid_product_codes.add(code)
-    
-    logger.info(f"✅ تم بناء خريطة المنتجات: {len(product_name_to_code_map)} اسم منتج فريد.")
-    # ---------------------------------------------------------------------
     
     # إحصائيات إجمالية
     total_stats = {
@@ -519,8 +433,7 @@ def main():
     # معالجة كل فرع
     for branch_id in BRANCH_IDS:
         try:
-            # ✅ تمرير خرائط المنتجات إلى process_branch_invoices
-            branch_stats = process_branch_invoices(daftra_client, supabase_client, branch_id, product_name_to_code_map, valid_product_codes)
+            branch_stats = process_branch_invoices(daftra_client, supabase_client, branch_id)
             
             # تجميع الإحصائيات
             for key in total_stats:
@@ -551,4 +464,3 @@ fetch_all = main
 
 if __name__ == "__main__":
     main()
-
