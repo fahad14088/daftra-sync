@@ -87,7 +87,6 @@ def sync_products():
             timeout=10
            )
  
-            )
             print(f"   → {resp.status_code} | {resp.text}")
             if resp.status_code in (200, 201):
                 total += 1
