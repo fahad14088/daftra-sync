@@ -59,8 +59,8 @@ def sync_products():
             )
 
             payload = {
-                "id": str(pid),  # 🔄 نستخدم id كـ product_id النهائي
-                "daftra_product_id": str(pid),
+                "product_id":         str(pid),  # ← نستخدمه للربط لاحقًا
+                "daftra_product_id":  str(pid),
                 "product_code":       code,
                 "name":               prod.get("name", ""),
                 "stock_balance":      str(prod.get("stock_balance", 0)),
@@ -72,7 +72,7 @@ def sync_products():
 
             print(">> upsert product:", payload)
             resp = requests.post(
-                f"{SUPABASE_URL}/rest/v1/products?on_conflict=id",
+                f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
                 headers=HEADERS_SB,
                 json=payload,
                 timeout=10
@@ -92,17 +92,17 @@ def fix_invoice_items_using_product_id():
     """تحديث كود المنتج داخل invoice_items بناءً على product_id"""
     print("🔧 تصحيح كود المنتج في البنود باستخدام product_id...")
 
-    # 1. جلب المنتجات: id → product_code
-    url_products = f"{SUPABASE_URL}/rest/v1/products?select=id,product_code"
+    # 1. جلب المنتجات: product_id → product_code
+    url_products = f"{SUPABASE_URL}/rest/v1/products?select=product_id,product_code"
     res = requests.get(url_products, headers=HEADERS_SB)
     if res.status_code != 200:
         print("❌ فشل في جلب المنتجات")
         return
 
     product_map = {
-        str(p["id"]).strip(): p["product_code"]
+        str(p["product_id"]).strip(): p["product_code"]
         for p in res.json()
-        if p.get("id") and p.get("product_code")
+        if p.get("product_id") and p.get("product_code")
     }
 
     # 2. جلب البنود: id و product_id
@@ -113,7 +113,10 @@ def fix_invoice_items_using_product_id():
         return
 
     updated = []
-    for row in res.json():
+    all_items = res.json()
+    print(f"🔍 عدد البنود التي سيتم فحصها: {len(all_items)}")
+
+    for row in all_items:
         item_id = row["id"]
         pid = str(row.get("product_id", "")).strip()
         actual_code = product_map.get(pid)
