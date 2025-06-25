@@ -1,4 +1,3 @@
-# products_service.py
 import os
 import requests
 import time
@@ -17,6 +16,7 @@ HEADERS_SB     = {
     "Prefer": "resolution=merge-duplicates"
 }
 
+
 def fetch_with_retry(url, headers, retries=3, timeout=30):
     for i in range(retries):
         try:
@@ -28,6 +28,7 @@ def fetch_with_retry(url, headers, retries=3, timeout=30):
             print("! fetch error:", e)
         time.sleep((i + 1) * 5)
     return None
+
 
 def sync_products():
     total = 0
@@ -87,5 +88,55 @@ def sync_products():
     print(f"✅ Done sync_products: {total} records")
     return {"synced": total}
 
+
+def fix_invoice_items_based_on_product_name():
+    """تصحيح كود المنتج في البنود إذا كان مكتوب فيه الاسم بدلاً من الكود"""
+    print("🔧 بدء تصحيح البنود في جدول invoice_items حسب الاسم الموجود في product_code...")
+
+    # 1. جلب المنتجات من Supabase
+    url_products = f"{SUPABASE_URL}/rest/v1/products?select=name,product_code"
+    res = requests.get(url_products, headers=HEADERS_SB)
+    if res.status_code != 200:
+        print("❌ فشل في جلب المنتجات")
+        return
+
+    product_map = {
+        p["name"].strip(): p["product_code"]
+        for p in res.json()
+        if p.get("name") and p.get("product_code")
+    }
+
+    # 2. جلب البنود من Supabase
+    url_items = f"{SUPABASE_URL}/rest/v1/invoice_items?select=id,product_code"
+    res = requests.get(url_items, headers=HEADERS_SB)
+    if res.status_code != 200:
+        print("❌ فشل في جلب البنود")
+        return
+
+    updated = []
+    for row in res.json():
+        item_id = row["id"]
+        current_value = (row.get("product_code") or "").strip()
+        actual_code = product_map.get(current_value)
+        if actual_code:
+            updated.append({
+                "id": item_id,
+                "product_code": actual_code
+            })
+
+    if not updated:
+        print("✅ لا توجد بنود بحاجة تصحيح.")
+        return
+
+    # 3. إرسال التحديثات
+    url_update = f"{SUPABASE_URL}/rest/v1/invoice_items?on_conflict=id"
+    res = requests.post(url_update, headers=HEADERS_SB, json=updated)
+    if res.status_code in [200, 201]:
+        print(f"✅ تم تحديث {len(updated)} بند بنجاح.")
+    else:
+        print(f"❌ فشل في تحديث البنود: {res.status_code} - {res.text}")
+
+
 if __name__ == "__main__":
     sync_products()
+    fix_invoice_items_based_on_product_name()
