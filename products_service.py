@@ -13,7 +13,6 @@ HEADERS_SB     = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
-    "Prefer": "resolution=merge-duplicates"
 }
 
 
@@ -59,7 +58,7 @@ def sync_products():
             )
 
             payload = {
-                "product_id":         str(pid),  # ← نستخدمه للربط لاحقًا
+                "product_id":         str(pid),
                 "daftra_product_id":  str(pid),
                 "product_code":       code,
                 "name":               prod.get("name", ""),
@@ -112,33 +111,25 @@ def fix_invoice_items_using_product_id():
         print("❌ فشل في جلب البنود")
         return
 
-    updated = []
     all_items = res.json()
     print(f"🔍 عدد البنود التي سيتم فحصها: {len(all_items)}")
 
+    updated = 0
     for row in all_items:
         item_id = row["id"]
         pid = str(row.get("product_id", "")).strip()
         actual_code = product_map.get(pid)
         if actual_code:
-            updated.append({
-                "id": item_id,
-                "product_code": actual_code
-            })
+            patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
+            patch_payload = {"product_code": actual_code}
+            res = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
+            print(f"🔄 تحديث بند {item_id} → {res.status_code}")
+            if res.status_code in [200, 204]:
+                updated += 1
         else:
             print(f"⚠️ لم يتم العثور على كود لـ product_id={pid}")
 
-    if not updated:
-        print("✅ لا توجد بنود بحاجة تصحيح.")
-        return
-
-    # 3. إرسال التحديثات
-    url_update = f"{SUPABASE_URL}/rest/v1/invoice_items?on_conflict=id"
-    res = requests.post(url_update, headers=HEADERS_SB, json=updated)
-    if res.status_code in [200, 201]:
-        print(f"✅ تم تحديث {len(updated)} بند بنجاح.")
-    else:
-        print(f"❌ فشل في تحديث البنود: {res.status_code} - {res.text}")
+    print(f"✅ تم تحديث {updated} بند بنجاح.")
 
 
 if __name__ == "__main__":
