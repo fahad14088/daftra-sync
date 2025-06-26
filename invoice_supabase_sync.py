@@ -327,8 +327,14 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         valid_invoices = 0
         
         for invoice in invoices:
-            if not DataValidator.validate_invoice(invoice):
-                continue
+            # تحقق هل الفاتورة موجودة مسبقًا في قاعدة البيانات
+            invoice_id = invoice["id"]
+               check_url = f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{invoice_id}&select=id"
+               res_check = requests.get(check_url, headers=HEADERS_SB)
+            if res_check.status_code == 200 and res_check.json():
+              print(f"⏭️ الفاتورة {invoice_id} موجودة مسبقاً، تم التجاهل")
+              continue
+
             
             # جلب تفاصيل الفاتورة مع البنود
             invoice_details = daftra_client.fetch_invoice_details(str(invoice['id']))
