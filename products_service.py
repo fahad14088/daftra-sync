@@ -116,10 +116,12 @@ def fix_invoice_items_using_product_id():
 
     product_map = {}
     for p in res.json():
-        pid = str(p.get("product_id")).strip()
+        pid = p.get("product_id")  # بدون str()
         code = p.get("product_code", "").strip()
-        if pid and code:
-            product_map[pid] = code
+        if pid is not None and code:
+            # حفظ المفتاح بكلا الصيغتين
+            product_map[str(pid)] = code
+            product_map[int(pid) if str(pid).isdigit() else pid] = code
 
     print(f"📦 عدد المنتجات المحملة: {len(product_map)}")
 
@@ -143,14 +145,20 @@ def fix_invoice_items_using_product_id():
 
         for row in batch:
             item_id = row["id"]
-            pid = str(row.get("product_id")).strip()
+            pid = row.get("product_id")  # بدون str()
             old_code = row.get("product_code", "").strip()
 
-            if not pid:
+            if pid is None:
                 continue
 
-            if pid in product_map:
+            # البحث بالصيغتين
+            new_code = None
+            if str(pid) in product_map:
+                new_code = product_map[str(pid)]
+            elif pid in product_map:
                 new_code = product_map[pid]
+
+            if new_code:
                 if old_code != new_code:
                     patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
                     patch_payload = {"product_code": new_code}
@@ -159,19 +167,13 @@ def fix_invoice_items_using_product_id():
                     if res_patch.status_code in [200, 204]:
                         total_updated += 1
                 else:
-                    print(f"⏩ تم التجاهل (نفس الكود): بند {item_id} ← {pid} ← {old_code}")
                     total_skipped += 1
             else:
                 total_not_found += 1
                 print(f"⚠️ لم يتم العثور على product_id={pid} في جدول المنتجات لرقم البند {item_id}")
-                مشابهة = [k for k in product_map if str(pid) in str(k) or str(k) in str(pid)]
-                if مشابهة:
-                    print(f"🔍 مفاتيح مشابهة مقترحة: {مشابهة}")
-                else:
-                    print("🚫 لا يوجد مفاتيح مشابهة")
 
         offset += limit
 
     print(f"\n✅ تم تحديث {total_updated} بند")
-    print(f"⏩ تم تجاهل {total_skipped} بند لأنه محدث مسبقاً")
-    print(f"⚠️ عدد البنود التي لم يتم العثور على المنتج لها: {total_not_found}")
+    print(f"⏩ تم تجاهل {total_skipped} بند")
+    print(f"⚠️ عدد البنود غير الموجودة: {total_not_found}")
