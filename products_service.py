@@ -108,7 +108,7 @@ def fix_invoice_items_product_id_using_code():
     print("🔧 تصحيح شامل للبنود (product_id + product_code) من المنتجات...")
 
     # 1. تحميل المنتجات
-    url_products = f"{SUPABASE_URL}/rest/v1/products?select=product_id,product_code"
+    url_products = f"{SUPABASE_URL}/rest/v1/products?select=product_id,product_code,name"
     res = requests.get(url_products, headers=HEADERS_SB)
     if res.status_code != 200:
         print("❌ فشل في جلب المنتجات")
@@ -116,10 +116,14 @@ def fix_invoice_items_product_id_using_code():
 
     code_map = {}
     for p in res.json():
-        code = p.get("product_code", "").strip()
         pid = p.get("product_id")
-        if code and pid:
-            code_map[code] = {"product_id": pid, "product_code": code}
+        code = p.get("product_code", "").strip()
+        name = p.get("name", "").strip()
+        if pid:
+            if code:
+                code_map[code] = {"product_id": pid, "product_code": code}
+            if name and name not in code_map:
+                code_map[name] = {"product_id": pid, "product_code": code}
 
     print(f"📦 عدد المنتجات المحملة: {len(code_map)}")
 
