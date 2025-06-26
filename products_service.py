@@ -104,8 +104,8 @@ def sync_products():
     return {"synced": total}
 
 
-def fix_invoice_items_using_product_id():
-    print("🔧 تصحيح كود المنتج في البنود باستخدام product_id...")
+def fix_invoice_items_product_id_using_code():
+    print("🔧 تحديث product_id في البنود باستخدام product_code...")
 
     # 1. تحميل المنتجات
     url_products = f"{SUPABASE_URL}/rest/v1/products?select=product_id,product_code"
@@ -114,37 +114,19 @@ def fix_invoice_items_using_product_id():
         print("❌ فشل في جلب المنتجات")
         return
 
-    product_map = {}
+    code_map = {}
     for p in res.json():
         pid = p.get("product_id")
         code = p.get("product_code", "").strip()
-        if pid is not None and code:
-            # حفظ بجميع الأنواع المحتملة
-            product_map[pid] = code
-            product_map[str(pid)] = code
-            if isinstance(pid, str) and pid.isdigit():
-                product_map[int(pid)] = code
+        if pid and code:
+            code_map[code] = pid
 
-    print(f"📦 عدد المنتجات المحملة: {len(product_map)}")
-    
-    # تشخيص للمشكلة
-    test_ids = [1327, 366, 1382, 443]
-    for test_id in test_ids:
-        print(f"🔍 البحث عن {test_id}:")
-        print(f"   - كرقم: {test_id in product_map}")
-        print(f"   - كنص: {str(test_id) in product_map}")
-    
-    # عرض عينة من المفاتيح
-    sample_keys = list(product_map.keys())[:10]
-    print(f"🔍 عينة من المفاتيح: {sample_keys}")
-    print(f"🔍 أنواع المفاتيح: {[type(k) for k in sample_keys]}")
+    print(f"📦 عدد المنتجات المحملة: {len(code_map)}")
 
     # 2. تحميل البنود
     limit = 1000
     offset = 0
     total_updated = 0
-    total_skipped = 0
-    total_not_found = 0
 
     while True:
         url_items = f"{SUPABASE_URL}/rest/v1/invoice_items?select=id,product_id,product_code&limit={limit}&offset={offset}"
@@ -159,31 +141,21 @@ def fix_invoice_items_using_product_id():
 
         for row in batch:
             item_id = row["id"]
-            pid = row.get("product_id")
-            old_code = row.get("product_code", "").strip()
+            current_pid = row.get("product_id")
+            code = row.get("product_code", "").strip()
 
-            if pid is None:
+            if not code:
                 continue
 
-            # البحث بجميع الأنواع
-            new_code = product_map.get(pid) or product_map.get(str(pid)) or product_map.get(int(pid) if isinstance(pid, str) and pid.isdigit() else None)
-
-            if new_code:
-                if old_code != new_code:
-                    patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
-                    patch_payload = {"product_code": new_code}
-                    res_patch = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
-                    print(f"✅ تحديث بند {item_id}: {pid} → {old_code} ← {new_code} → {res_patch.status_code}")
-                    if res_patch.status_code in [200, 204]:
-                        total_updated += 1
-                else:
-                    total_skipped += 1
-            else:
-                total_not_found += 1
-                print(f"⚠️ لم يتم العثور على product_id={pid} (نوع: {type(pid)}) في جدول المنتجات لرقم البند {item_id}")
+            new_pid = code_map.get(code)
+            if new_pid and new_pid != current_pid:
+                patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
+                patch_payload = {"product_id": new_pid}
+                res_patch = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
+                if res_patch.status_code in [200, 204]:
+                    print(f"✅ تحديث بند {item_id}: {code} ← {new_pid}")
+                    total_updated += 1
 
         offset += limit
 
-    print(f"\n✅ تم تحديث {total_updated} بند")
-    print(f"⏩ تم تجاهل {total_skipped} بند")
-    print(f"⚠️ عدد البنود غير الموجودة: {total_not_found}")
+    print(f"\n✅ تم تحديث {total_updated} بند بنجاح.")
