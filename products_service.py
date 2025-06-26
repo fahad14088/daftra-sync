@@ -69,7 +69,7 @@ def sync_products():
             )
 
             payload = {
-                "product_id":        str(pid),
+                "product_id":        pid,
                 "daftra_product_id": str(pid),
                 "product_code":      safe_text(code),
                 "name":              safe_text(prod.get("name", "")),
@@ -116,12 +116,10 @@ def fix_invoice_items_using_product_id():
 
     product_map = {}
     for p in res.json():
-        pid = p.get("product_id")  # بدون str()
+        pid = p.get("product_id")
         code = p.get("product_code", "").strip()
         if pid is not None and code:
-            # حفظ المفتاح بكلا الصيغتين
-            product_map[str(pid)] = code
-            product_map[int(pid) if str(pid).isdigit() else pid] = code
+            product_map[pid] = code
 
     print(f"📦 عدد المنتجات المحملة: {len(product_map)}")
 
@@ -145,20 +143,14 @@ def fix_invoice_items_using_product_id():
 
         for row in batch:
             item_id = row["id"]
-            pid = row.get("product_id")  # بدون str()
+            pid = row.get("product_id")
             old_code = row.get("product_code", "").strip()
 
             if pid is None:
                 continue
 
-            # البحث بالصيغتين
-            new_code = None
-            if str(pid) in product_map:
-                new_code = product_map[str(pid)]
-            elif pid in product_map:
+            if pid in product_map:
                 new_code = product_map[pid]
-
-            if new_code:
                 if old_code != new_code:
                     patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
                     patch_payload = {"product_code": new_code}
