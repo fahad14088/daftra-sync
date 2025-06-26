@@ -1,6 +1,6 @@
 import os
 import sys
-from products_service import sync_products, fix_invoice_items_using_product_id
+from products_service import sync_products, fix_invoice_items_product_id_using_code
 from invoice_supabase_sync import fetch_all as sync_invoices, fetch_missing_items
 
 def main():
