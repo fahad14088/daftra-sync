@@ -105,7 +105,6 @@ def sync_products():
 
 
 def fix_invoice_items_product_id_using_code():
-
     print("🔧 تصحيح شامل للبنود (product_id + product_code) من المنتجات...")
 
     # 1. تحميل المنتجات
@@ -120,7 +119,7 @@ def fix_invoice_items_product_id_using_code():
         code = p.get("product_code", "").strip()
         pid = p.get("product_id")
         if code and pid:
-            code_map[code] = pid
+            code_map[code] = {"product_id": pid, "product_code": code}
 
     print(f"📦 عدد المنتجات المحملة: {len(code_map)}")
 
@@ -148,20 +147,22 @@ def fix_invoice_items_product_id_using_code():
             if not current_code:
                 continue
 
-            new_pid = code_map.get(current_code)
-            if not new_pid:
+            match = code_map.get(current_code)
+            if not match:
                 continue
 
-            # فقط إذا كان يحتاج تحديث فعلاً
-            if str(current_pid) != str(new_pid):
+            new_pid = match["product_id"]
+            new_code = match["product_code"]
+
+            if str(current_pid) != str(new_pid) or current_code != new_code:
                 patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
                 patch_payload = {
                     "product_id": new_pid,
-                    "product_code": current_code
+                    "product_code": new_code
                 }
                 res_patch = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
                 if res_patch.status_code in [200, 204]:
-                    print(f"✅ بند {item_id} ← product_id = {new_pid}")
+                    print(f"✅ بند {item_id} ← product_id = {new_pid} ، code = {new_code}")
                     total_updated += 1
 
         offset += limit
