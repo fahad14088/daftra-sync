@@ -119,6 +119,7 @@ def fix_invoice_items_product_id_using_code():
         pid = p.get("product_id")
         code = p.get("product_code", "").strip()
         name = p.get("name", "").strip()
+
         if pid:
             if code:
                 code_map[code] = {"product_id": pid, "product_code": code}
@@ -148,10 +149,8 @@ def fix_invoice_items_product_id_using_code():
             current_pid = row.get("product_id")
             current_code = row.get("product_code", "").strip()
 
-            if not current_code:
-                continue
-
             match = code_map.get(current_code)
+
             if not match:
                 continue
 
