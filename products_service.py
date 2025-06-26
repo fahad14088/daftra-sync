@@ -119,9 +119,25 @@ def fix_invoice_items_using_product_id():
         pid = p.get("product_id")
         code = p.get("product_code", "").strip()
         if pid is not None and code:
+            # حفظ بجميع الأنواع المحتملة
             product_map[pid] = code
+            product_map[str(pid)] = code
+            if isinstance(pid, str) and pid.isdigit():
+                product_map[int(pid)] = code
 
     print(f"📦 عدد المنتجات المحملة: {len(product_map)}")
+    
+    # تشخيص للمشكلة
+    test_ids = [1327, 366, 1382, 443]
+    for test_id in test_ids:
+        print(f"🔍 البحث عن {test_id}:")
+        print(f"   - كرقم: {test_id in product_map}")
+        print(f"   - كنص: {str(test_id) in product_map}")
+    
+    # عرض عينة من المفاتيح
+    sample_keys = list(product_map.keys())[:10]
+    print(f"🔍 عينة من المفاتيح: {sample_keys}")
+    print(f"🔍 أنواع المفاتيح: {[type(k) for k in sample_keys]}")
 
     # 2. تحميل البنود
     limit = 1000
@@ -149,8 +165,10 @@ def fix_invoice_items_using_product_id():
             if pid is None:
                 continue
 
-            if pid in product_map:
-                new_code = product_map[pid]
+            # البحث بجميع الأنواع
+            new_code = product_map.get(pid) or product_map.get(str(pid)) or product_map.get(int(pid) if isinstance(pid, str) and pid.isdigit() else None)
+
+            if new_code:
                 if old_code != new_code:
                     patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
                     patch_payload = {"product_code": new_code}
@@ -162,7 +180,7 @@ def fix_invoice_items_using_product_id():
                     total_skipped += 1
             else:
                 total_not_found += 1
-                print(f"⚠️ لم يتم العثور على product_id={pid} في جدول المنتجات لرقم البند {item_id}")
+                print(f"⚠️ لم يتم العثور على product_id={pid} (نوع: {type(pid)}) في جدول المنتجات لرقم البند {item_id}")
 
         offset += limit
 
