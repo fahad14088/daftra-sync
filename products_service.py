@@ -104,7 +104,8 @@ def sync_products():
     return {"synced": total}
 
 
-def fix_invoice_items_product_id_and_code():
+def fix_invoice_items_product_id_using_code()
+
     print("🔧 تصحيح شامل للبنود (product_id + product_code) من المنتجات...")
 
     # 1. تحميل المنتجات
