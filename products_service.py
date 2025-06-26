@@ -104,31 +104,29 @@ def sync_products():
     return {"synced": total}
 
 
-def fix_product_code_in_invoice_items():
-    print("🔧 تحديث product_code في البنود بناءً على product_id من جدول المنتجات...")
+def fix_invoice_items_product_id_and_code():
+    print("🔧 تصحيح شامل للبنود (product_id + product_code) من المنتجات...")
 
-    # 1. تحميل المنتجات: نربط product_id ↔ product_code
+    # 1. تحميل المنتجات
     url_products = f"{SUPABASE_URL}/rest/v1/products?select=product_id,product_code"
     res = requests.get(url_products, headers=HEADERS_SB)
     if res.status_code != 200:
         print("❌ فشل في جلب المنتجات")
         return
 
-    product_map = {}
+    code_map = {}
     for p in res.json():
-        pid = p.get("product_id")
         code = p.get("product_code", "").strip()
-        if pid is not None and code:
-            product_map[pid] = code
+        pid = p.get("product_id")
+        if code and pid:
+            code_map[code] = pid
 
-    print(f"📦 عدد المنتجات: {len(product_map)}")
+    print(f"📦 عدد المنتجات المحملة: {len(code_map)}")
 
-    # 2. تحديث البنود: نستخدم product_id في البند لإحضار الكود الصحيح من الجدول
+    # 2. تحديث البنود
     limit = 1000
     offset = 0
-    updated = 0
-    skipped = 0
-    not_found = 0
+    total_updated = 0
 
     while True:
         url_items = f"{SUPABASE_URL}/rest/v1/invoice_items?select=id,product_id,product_code&limit={limit}&offset={offset}"
@@ -137,34 +135,34 @@ def fix_product_code_in_invoice_items():
             print("❌ فشل في جلب البنود")
             break
 
-        batch = res.json()
-        if not batch:
+        items = res.json()
+        if not items:
             break
 
-        for item in batch:
-            item_id = item["id"]
-            pid = item.get("product_id")
-            old_code = item.get("product_code", "").strip()
+        for row in items:
+            item_id = row["id"]
+            current_pid = row.get("product_id")
+            current_code = row.get("product_code", "").strip()
 
-            if not pid:
+            if not current_code:
                 continue
 
-            new_code = product_map.get(pid)
-            if new_code:
-                if old_code != new_code:
-                    patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
-                    patch_payload = {"product_code": new_code}
-                    res_patch = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
-                    if res_patch.status_code in [200, 204]:
-                        updated += 1
-                        print(f"✅ تحديث بند {item_id}: {old_code} ← {new_code}")
-                else:
-                    skipped += 1
-            else:
-                not_found += 1
+            new_pid = code_map.get(current_code)
+            if not new_pid:
+                continue
+
+            # فقط إذا كان يحتاج تحديث فعلاً
+            if str(current_pid) != str(new_pid):
+                patch_url = f"{SUPABASE_URL}/rest/v1/invoice_items?id=eq.{item_id}"
+                patch_payload = {
+                    "product_id": new_pid,
+                    "product_code": current_code
+                }
+                res_patch = requests.patch(patch_url, headers=HEADERS_SB, json=patch_payload)
+                if res_patch.status_code in [200, 204]:
+                    print(f"✅ بند {item_id} ← product_id = {new_pid}")
+                    total_updated += 1
 
         offset += limit
 
-    print(f"\n✅ تم التحديث: {updated}")
-    print(f"⏩ تم تجاهل: {skipped}")
-    print(f"⚠️ لم يتم العثور على الكود لـ: {not_found} بند")
+    print(f"\n✅ تم تحديث {total_updated} بند بنجاح.")
