@@ -10,8 +10,8 @@ def main():
 
     # ✅ تصحيح البنود القديمة بعد جلب المنتجات مباشرة
     try:
-        print("🔧 تصحيح البنود القديمة باستخدام product_id...")
-        fix_invoice_items_using_product_id()
+        print("🔧 تصحيح البنود القديمة باستخدام product_code...")
+        fix_invoice_items_product_id_using_code()
     except Exception as e:
         print(f"❌ خطأ أثناء التصحيح (القديم): {e}")
 
@@ -34,8 +34,8 @@ def main():
     
     # ✅ تصحيح البنود بعد جلب فواتير جديدة
     try:
-        print("🔧 تصحيح البنود الجديدة باستخدام product_id...")
-        fix_invoice_items_using_product_id()
+        print("🔧 تصحيح البنود الجديدة باستخدام product_code...")
+        fix_invoice_items_product_id_using_code()
     except Exception as e:
         print(f"❌ خطأ أثناء التصحيح (الجديد): {e}")
 
