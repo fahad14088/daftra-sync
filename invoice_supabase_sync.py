@@ -1,3 +1,6 @@
+إليك الكود الكامل مع **دالة تحديث البيانات القديمة** 🔧:
+
+```python
 import time
 import requests
 import logging
@@ -79,16 +82,33 @@ class DataValidator:
         return cleaned
     
     @staticmethod
-    def clean_item_data(item: Dict[str, Any], invoice_id: str, client_name: str) -> Dict[str, Any]:
-        """تنظيف وتحويل بيانات البند - أسماء الحقول الصحيحة"""
+    def clean_item_data(item: Dict[str, Any], invoice_id: str, client_name: str, supabase_client=None) -> Dict[str, Any]:
+        """تنظيف وتحويل بيانات البند - مع تصحيح product_code"""
+        
+        product_id = str(item.get('product_id', ''))
+        # الكود الخطأ من API دفترة
+        wrong_code = str(item.get('item', ''))[:50]
+        
+        # جلب الكود الصحيح من جدول products
+        if product_id and supabase_client:
+            correct_code = supabase_client.get_correct_product_code(product_id)
+            # استخدم الكود الصحيح إذا وُجد، وإلا استخدم الخطأ كـ backup
+            product_code = correct_code if correct_code else wrong_code
+            
+            # تسجيل التصحيح إذا تم
+            if correct_code and correct_code != wrong_code:
+                logger.info(f"🔧 تم تصحيح الكود للمنتج {product_id}: '{wrong_code}' → '{correct_code}'")
+        else:
+            product_code = wrong_code
+        
         cleaned = {
             'id': str(item.get('id', '')),
             'invoice_id': str(invoice_id),
             'quantity': float(item.get('quantity', 0)),
             'unit_price': float(item.get('unit_price', 0)),
             'subtotal': float(item.get('subtotal', 0)),
-            'product_id': str(item.get('product_id', '')),
-            'product_code': str(item.get('item', ''))[:50],
+            'product_id': product_id,
+            'product_code': product_code,  # الكود الصحيح الآن! ✅
             'client_business_name': str(client_name)[:255],
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat()
@@ -123,6 +143,129 @@ class SupabaseClient:
         self.headers = HEADERS_SUPABASE
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+    
+    def get_correct_product_code(self, product_id: str) -> str:
+        """جلب الكود الصحيح من جدول products بناءً على product_id"""
+        if not product_id:
+            return ""
+        
+        try:
+            # العلاقة الصحيحة: invoice_items.product_id = products.product_id
+            url = f"{self.base_url}/products?product_id=eq.{product_id}&select=product_code"
+            response = self.session.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                products = response.json()
+                if products and len(products) > 0:
+                    correct_code = products[0].get('product_code', '')
+                    if correct_code:
+                        return correct_code.strip()
+                        
+        except Exception as e:
+            logger.error(f"❌ خطأ في جلب كود المنتج {product_id}: {e}")
+        
+        return ""
+    
+    def fix_existing_product_codes(self) -> Dict[str, int]:
+        """تصحيح أكواد المنتجات للبيانات الموجودة في قاعدة البيانات"""
+        logger.info("🔧 بدء تصحيح أكواد المنتجات الموجودة...")
+        
+        stats = {'fixed_count': 0, 'total_checked': 0, 'errors': 0}
+        
+        try:
+            # جلب البنود على دفعات لتجنب تحميل كمية كبيرة من البيانات
+            limit = 1000
+            offset = 0
+            
+            while True:
+                # جلب دفعة من البنود
+                items_url = f"{self.base_url}/invoice_items?select=id,product_id,product_code&limit={limit}&offset={offset}"
+                response = self.session.get(items_url, timeout=30)
+                
+                if response.status_code != 200:
+                    logger.error(f"❌ فشل في جلب البنود: {response.status_code}")
+                    break
+                
+                items = response.json()
+                
+                if not items:
+                    logger.info("✅ انتهاء معالجة جميع البنود")
+                    break
+                
+                logger.info(f"🔍 معالجة دفعة من {len(items)} بند (إجمالي: {stats['total_checked']})")
+                
+                # معالجة كل بند في الدفعة
+                updates_batch = []
+                
+                for item in items:
+                    stats['total_checked'] += 1
+                    
+                    product_id = item.get('product_id')
+                    current_code = item.get('product_code', '')
+                    
+                    if product_id:
+                        # جلب الكود الصحيح
+                        correct_code = self.get_correct_product_code(product_id)
+                        
+                        # إذا كان الكود مختلف، حضّر للتحديث
+                        if correct_code and correct_code != current_code:
+                            updates_batch.append({
+                                'id': item['id'],
+                                'product_code': correct_code,
+                                'current_code': current_code
+                            })
+                            
+                            logger.info(f"🔧 سيتم تصحيح البند {item['id']}: '{current_code}' → '{correct_code}'")
+                
+                # تطبيق التحديثات على الدفعة
+                for update in updates_batch:
+                    try:
+                        update_url = f"{self.base_url}/invoice_items?id=eq.{update['id']}"
+                        update_data = {"product_code": update['product_code']}
+                        
+                        update_response = self.session.patch(
+                            update_url, 
+                            json=update_data, 
+                            timeout=10
+                        )
+                        
+                        if update_response.status_code == 204:
+                            stats['fixed_count'] += 1
+                            logger.info(f"✅ تم تصحيح البند {update['id']}")
+                        else:
+                            stats['errors'] += 1
+                            logger.error(f"❌ فشل تحديث البند {update['id']}: {update_response.status_code}")
+                            
+                    except Exception as e:
+                        stats['errors'] += 1
+                        logger.error(f"❌ خطأ في تحديث البند {update['id']}: {e}")
+                
+                # انتظار قصير بين الدفعات
+                if updates_batch:
+                    time.sleep(1)
+                
+                offset += limit
+                
+                # تحديث التقدم
+                if stats['total_checked'] % 5000 == 0:
+                    logger.info(f"📊 تقدم العملية: فحص {stats['total_checked']} بند، تصحيح {stats['fixed_count']} بند")
+        
+        except Exception as e:
+            logger.error(f"❌ خطأ عام في تصحيح الأكواد: {e}")
+            stats['errors'] += 1
+        
+        # التقرير النهائي
+        logger.info("📊 تقرير تصحيح أكواد المنتجات:")
+        logger.info(f"   - إجمالي البنود المفحوصة: {stats['total_checked']}")
+        logger.info(f"   - البنود المُصححة: {stats['fixed_count']}")
+        logger.info(f"   - الأخطاء: {stats['errors']}")
+        
+        if stats['fixed_count'] > 0:
+            logger.info(f"🎉 تم تصحيح {stats['fixed_count']} بند بنجاح!")
+        else:
+            logger.info("ℹ️ لا توجد أكواد تحتاج تصحيح")
+        
+        return stats
     
     def upsert_batch(self, table: str, data: List[Dict[str, Any]]) -> tuple[int, int]:
         """إدراج أو تحديث دفعة من البيانات مع حل مشكلة التكرار"""
@@ -270,7 +413,8 @@ def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseCl
             
             for item in items:
                 if DataValidator.validate_item(item):
-                    cleaned_item = DataValidator.clean_item_data(item, invoice_id, client_name)
+                    # تمرير supabase_client للحصول على الكود الصحيح
+                    cleaned_item = DataValidator.clean_item_data(item, invoice_id, client_name, supabase_client)
                     items_batch.append(cleaned_item)
             
             if len(items_batch) >= BATCH_SIZE:
@@ -330,11 +474,11 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
             invoice_id = invoice["id"]
 
             # تحقق هل الفاتورة موجودة مسبقًا في قاعدة البيانات
-            check_url = f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{invoice_id}&select=id"
-            res_check = requests.get(check_url, headers=HEADERS_SUPABASE)  # تصحيح اسم المتغير
+            check_url = f"{SUPABASE_URL}/invoices?id=eq.{invoice_id}&select=id"
+            res_check = requests.get(check_url, headers=HEADERS_SUPABASE)
             
             if res_check.status_code == 200 and res_check.json():
-                print(f"🟦 الفاتورة {invoice_id} موجودة مسبقًا وتم تجاهلها")
+                logger.info(f"🟦 الفاتورة {invoice_id} موجودة مسبقًا وتم تجاهلها")
                 continue
 
             # جلب تفاصيل الفاتورة مع البنود
@@ -358,7 +502,8 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
                 
                 for item in items:
                     if DataValidator.validate_item(item):
-                        cleaned_item = DataValidator.clean_item_data(item, invoice['id'], client_name)
+                        # تمرير supabase_client للحصول على الكود الصحيح
+                        cleaned_item = DataValidator.clean_item_data(item, invoice['id'], client_name, supabase_client)
                         items_batch.append(cleaned_item)
                         
             except Exception as e:
@@ -408,7 +553,6 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
     return stats
 
 
-
 def main():
     """الدالة الرئيسية"""
     logger.info("🚀 بدء عملية جلب البيانات من دفترة...")
@@ -422,6 +566,10 @@ def main():
     daftra_client = DaftraClient()
     supabase_client = SupabaseClient()
     
+    # 🆕 تصحيح البيانات القديمة أولاً
+    logger.info("🔧 بدء تصحيح أكواد المنتجات للبيانات الموجودة...")
+    fix_stats = supabase_client.fix_existing_product_codes()
+    
     # إحصائيات إجمالية
     total_stats = {
         'invoices_processed': 0,
@@ -432,7 +580,7 @@ def main():
         'items_failed': 0
     }
     
-    # معالجة كل فرع
+    # معالجة كل فرع (للبيانات الجديدة)
     for branch_id in BRANCH_IDS:
         try:
             branch_stats = process_branch_invoices(daftra_client, supabase_client, branch_id)
@@ -446,19 +594,21 @@ def main():
     
     # التقرير النهائي
     logger.info("📊 إحصائيات المعالجة النهائية:")
-    logger.info(f"   - الفواتير المعالجة: {total_stats['invoices_processed']}")
-    logger.info(f"   - البنود المعالجة: {total_stats['items_processed']}")
+    logger.info(f"   - البيانات القديمة المُصححة: {fix_stats['fixed_count']}")
+    logger.info(f"   - الفواتير المعالجة (جديدة): {total_stats['invoices_processed']}")
+    logger.info(f"   - البنود المعالجة (جديدة): {total_stats['items_processed']}")
     logger.info(f"   - الفواتير المحفوظة: {total_stats['invoices_saved']}")
     logger.info(f"   - البنود المحفوظة: {total_stats['items_saved']}")
     logger.info(f"   - أخطاء الفواتير: {total_stats['invoices_failed']}")
     logger.info(f"   - أخطاء البنود: {total_stats['items_failed']}")
     
-    if total_stats['invoices_processed'] == 0:
-        logger.warning("⚠️ لا توجد فواتير للمعالجة")
+    if total_stats['invoices_processed'] == 0 and fix_stats['fixed_count'] == 0:
+        logger.warning("⚠️ لا توجد فواتير للمعالجة ولا بيانات للتصحيح")
     
     logger.info("🎉 انتهاء العملية - التقرير النهائي:")
-    logger.info(f"   📋 الفواتير: {total_stats['invoices_saved']} نجحت، {total_stats['invoices_failed']} فشلت")
-    logger.info(f"   📝 البنود: {total_stats['items_saved']} نجح، {total_stats['items_failed']} فشل")
+    logger.info(f"   🔧 البيانات المُصححة: {fix_stats['fixed_count']} بند")
+    logger.info(f"   📋 الفواتير الجديدة: {total_stats['invoices_saved']} نجحت، {total_stats['invoices_failed']} فشلت")
+    logger.info(f"   📝 البنود الجديدة: {total_stats['items_saved']} نجح، {total_stats['items_failed']} فشل")
 
 
 # إضافة alias للتوافق مع main.py
