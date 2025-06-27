@@ -1,6 +1,3 @@
-إليك الكود الكامل مع **دالة تحديث البيانات القديمة** 🔧:
-
-```python
 import time
 import requests
 import logging
@@ -97,7 +94,7 @@ class DataValidator:
             
             # تسجيل التصحيح إذا تم
             if correct_code and correct_code != wrong_code:
-                logger.info(f"🔧 تم تصحيح الكود للمنتج {product_id}: '{wrong_code}' → '{correct_code}'")
+                logger.info(f"تم تصحيح الكود للمنتج {product_id}: '{wrong_code}' → '{correct_code}'")
         else:
             product_code = wrong_code
         
@@ -108,7 +105,7 @@ class DataValidator:
             'unit_price': float(item.get('unit_price', 0)),
             'subtotal': float(item.get('subtotal', 0)),
             'product_id': product_id,
-            'product_code': product_code,  # الكود الصحيح الآن! ✅
+            'product_code': product_code,  # الكود الصحيح الآن
             'client_business_name': str(client_name)[:255],
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat()
@@ -162,13 +159,13 @@ class SupabaseClient:
                         return correct_code.strip()
                         
         except Exception as e:
-            logger.error(f"❌ خطأ في جلب كود المنتج {product_id}: {e}")
+            logger.error(f"خطأ في جلب كود المنتج {product_id}: {e}")
         
         return ""
     
     def fix_existing_product_codes(self) -> Dict[str, int]:
         """تصحيح أكواد المنتجات للبيانات الموجودة في قاعدة البيانات"""
-        logger.info("🔧 بدء تصحيح أكواد المنتجات الموجودة...")
+        logger.info("بدء تصحيح أكواد المنتجات الموجودة...")
         
         stats = {'fixed_count': 0, 'total_checked': 0, 'errors': 0}
         
@@ -183,16 +180,16 @@ class SupabaseClient:
                 response = self.session.get(items_url, timeout=30)
                 
                 if response.status_code != 200:
-                    logger.error(f"❌ فشل في جلب البنود: {response.status_code}")
+                    logger.error(f"فشل في جلب البنود: {response.status_code}")
                     break
                 
                 items = response.json()
                 
                 if not items:
-                    logger.info("✅ انتهاء معالجة جميع البنود")
+                    logger.info("انتهاء معالجة جميع البنود")
                     break
                 
-                logger.info(f"🔍 معالجة دفعة من {len(items)} بند (إجمالي: {stats['total_checked']})")
+                logger.info(f"معالجة دفعة من {len(items)} بند (إجمالي: {stats['total_checked']})")
                 
                 # معالجة كل بند في الدفعة
                 updates_batch = []
@@ -215,7 +212,7 @@ class SupabaseClient:
                                 'current_code': current_code
                             })
                             
-                            logger.info(f"🔧 سيتم تصحيح البند {item['id']}: '{current_code}' → '{correct_code}'")
+                            logger.info(f"سيتم تصحيح البند {item['id']}: '{current_code}' → '{correct_code}'")
                 
                 # تطبيق التحديثات على الدفعة
                 for update in updates_batch:
@@ -231,14 +228,14 @@ class SupabaseClient:
                         
                         if update_response.status_code == 204:
                             stats['fixed_count'] += 1
-                            logger.info(f"✅ تم تصحيح البند {update['id']}")
+                            logger.info(f"تم تصحيح البند {update['id']}")
                         else:
                             stats['errors'] += 1
-                            logger.error(f"❌ فشل تحديث البند {update['id']}: {update_response.status_code}")
+                            logger.error(f"فشل تحديث البند {update['id']}: {update_response.status_code}")
                             
                     except Exception as e:
                         stats['errors'] += 1
-                        logger.error(f"❌ خطأ في تحديث البند {update['id']}: {e}")
+                        logger.error(f"خطأ في تحديث البند {update['id']}: {e}")
                 
                 # انتظار قصير بين الدفعات
                 if updates_batch:
@@ -248,22 +245,22 @@ class SupabaseClient:
                 
                 # تحديث التقدم
                 if stats['total_checked'] % 5000 == 0:
-                    logger.info(f"📊 تقدم العملية: فحص {stats['total_checked']} بند، تصحيح {stats['fixed_count']} بند")
+                    logger.info(f"تقدم العملية: فحص {stats['total_checked']} بند، تصحيح {stats['fixed_count']} بند")
         
         except Exception as e:
-            logger.error(f"❌ خطأ عام في تصحيح الأكواد: {e}")
+            logger.error(f"خطأ عام في تصحيح الأكواد: {e}")
             stats['errors'] += 1
         
         # التقرير النهائي
-        logger.info("📊 تقرير تصحيح أكواد المنتجات:")
+        logger.info("تقرير تصحيح أكواد المنتجات:")
         logger.info(f"   - إجمالي البنود المفحوصة: {stats['total_checked']}")
         logger.info(f"   - البنود المُصححة: {stats['fixed_count']}")
         logger.info(f"   - الأخطاء: {stats['errors']}")
         
         if stats['fixed_count'] > 0:
-            logger.info(f"🎉 تم تصحيح {stats['fixed_count']} بند بنجاح!")
+            logger.info(f"تم تصحيح {stats['fixed_count']} بند بنجاح!")
         else:
-            logger.info("ℹ️ لا توجد أكواد تحتاج تصحيح")
+            logger.info("لا توجد أكواد تحتاج تصحيح")
         
         return stats
     
@@ -286,24 +283,24 @@ class SupabaseClient:
                 response = self.session.post(url, json=data, headers=upsert_headers, timeout=30)
                 
                 if response.status_code in [200, 201]:
-                    logger.info(f"✅ تم حفظ/تحديث {len(data)} سجل في جدول {table}")
+                    logger.info(f"تم حفظ/تحديث {len(data)} سجل في جدول {table}")
                     return len(data), 0
                 elif response.status_code == 409:
                     # في حالة التكرار، جرب مرة أخرى مع تحديث فقط
-                    logger.warning(f"⚠️ بيانات مكررة في {table}، محاولة التحديث...")
+                    logger.warning(f"بيانات مكررة في {table}، محاولة التحديث...")
                     update_headers = {
                         **self.headers,
                         "Prefer": "resolution=ignore-duplicates,return=minimal"
                     }
                     response = self.session.post(url, json=data, headers=update_headers, timeout=30)
                     if response.status_code in [200, 201]:
-                        logger.info(f"✅ تم تحديث {len(data)} سجل في جدول {table}")
+                        logger.info(f"تم تحديث {len(data)} سجل في جدول {table}")
                         return len(data), 0
                 else:
-                    logger.error(f"❌ خطأ في حفظ {table}: {response.status_code} - {response.text}")
+                    logger.error(f"خطأ في حفظ {table}: {response.status_code} - {response.text}")
                     
             except requests.exceptions.RequestException as e:
-                logger.error(f"❌ خطأ في الاتصال مع Supabase (محاولة {attempt + 1}): {e}")
+                logger.error(f"خطأ في الاتصال مع Supabase (محاولة {attempt + 1}): {e}")
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY)
                     
@@ -336,10 +333,10 @@ class DaftraClient:
                 if response.status_code == 200:
                     return response.json()
                 else:
-                    logger.error(f"❌ خطأ في جلب الفواتير: {response.status_code}")
+                    logger.error(f"خطأ في جلب الفواتير: {response.status_code}")
                     
             except requests.exceptions.RequestException as e:
-                logger.error(f"❌ خطأ في الاتصال مع دفترة (محاولة {attempt + 1}): {e}")
+                logger.error(f"خطأ في الاتصال مع دفترة (محاولة {attempt + 1}): {e}")
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY)
                     
@@ -356,10 +353,10 @@ class DaftraClient:
                 if response.status_code == 200:
                     return response.json()
                 else:
-                    logger.error(f"❌ خطأ في جلب تفاصيل الفاتورة {invoice_id}: {response.status_code}")
+                    logger.error(f"خطأ في جلب تفاصيل الفاتورة {invoice_id}: {response.status_code}")
                     
             except requests.exceptions.RequestException as e:
-                logger.error(f"❌ خطأ في الاتصال مع دفترة (محاولة {attempt + 1}): {e}")
+                logger.error(f"خطأ في الاتصال مع دفترة (محاولة {attempt + 1}): {e}")
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY)
                     
@@ -368,7 +365,7 @@ class DaftraClient:
 
 def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseClient) -> Dict[str, int]:
     """جلب البنود المفقودة للفواتير الموجودة بدون بنود"""
-    logger.info("🔍 البحث عن الفواتير بدون بنود...")
+    logger.info("البحث عن الفواتير بدون بنود...")
     
     stats = {'items_saved': 0, 'items_failed': 0}
     
@@ -393,7 +390,7 @@ def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseCl
                 if len(items) == 0:
                     missing_invoices.append(invoice)
         
-        logger.info(f"🔍 وُجد {len(missing_invoices)} فاتورة بدون بنود")
+        logger.info(f"وُجد {len(missing_invoices)} فاتورة بدون بنود")
         
         if not missing_invoices:
             return stats
@@ -428,17 +425,17 @@ def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseCl
             stats['items_saved'] += saved
             stats['items_failed'] += failed
         
-        logger.info(f"✅ تم جلب {stats['items_saved']} بند مفقود")
+        logger.info(f"تم جلب {stats['items_saved']} بند مفقود")
         
     except Exception as e:
-        logger.error(f"❌ خطأ في جلب البنود المفقودة: {e}")
+        logger.error(f"خطأ في جلب البنود المفقودة: {e}")
     
     return stats
 
 
 def process_branch_invoices(daftra_client: DaftraClient, supabase_client: SupabaseClient, branch_id: int) -> Dict[str, int]:
     """معالجة فواتير فرع واحد"""
-    logger.info(f"🏢 بدء معالجة الفرع {branch_id}")
+    logger.info(f"بدء معالجة الفرع {branch_id}")
     
     stats = {
         'invoices_processed': 0,
@@ -454,18 +451,18 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
     items_batch = []
     
     while True:
-        logger.info(f"📄 جلب الصفحة {page} للفرع {branch_id}...")
+        logger.info(f"جلب الصفحة {page} للفرع {branch_id}...")
         
         response_data = daftra_client.fetch_invoices(branch_id, page)
         
         if not response_data or 'data' not in response_data:
-            logger.warning(f"⚠️ لا توجد بيانات في الصفحة {page} للفرع {branch_id}")
+            logger.warning(f"لا توجد بيانات في الصفحة {page} للفرع {branch_id}")
             break
             
         invoices = response_data['data']
         
         if not invoices:
-            logger.info(f"✅ انتهاء فواتير الفرع {branch_id} في الصفحة {page}")
+            logger.info(f"انتهاء فواتير الفرع {branch_id} في الصفحة {page}")
             break
         
         valid_invoices = 0
@@ -478,13 +475,13 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
             res_check = requests.get(check_url, headers=HEADERS_SUPABASE)
             
             if res_check.status_code == 200 and res_check.json():
-                logger.info(f"🟦 الفاتورة {invoice_id} موجودة مسبقًا وتم تجاهلها")
+                logger.info(f"الفاتورة {invoice_id} موجودة مسبقًا وتم تجاهلها")
                 continue
 
             # جلب تفاصيل الفاتورة مع البنود
             invoice_details = daftra_client.fetch_invoice_details(str(invoice['id']))
             if not invoice_details:
-                logger.warning(f"⚠️ فشل في جلب تفاصيل الفاتورة {invoice['id']}")
+                logger.warning(f"فشل في جلب تفاصيل الفاتورة {invoice['id']}")
                 continue
 
             # دمج البيانات الأساسية مع التفاصيل
@@ -507,10 +504,10 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
                         items_batch.append(cleaned_item)
                         
             except Exception as e:
-                logger.error(f"❌ خطأ في معالجة الفاتورة {invoice.get('id', 'غير معروف')}: {e}")
+                logger.error(f"خطأ في معالجة الفاتورة {invoice.get('id', 'غير معروف')}: {e}")
                 continue
         
-        logger.info(f"📋 فرع {branch_id} - صفحة {page}: {valid_invoices} فاتورة صالحة من أصل {len(invoices)}")
+        logger.info(f"فرع {branch_id} - صفحة {page}: {valid_invoices} فاتورة صالحة من أصل {len(invoices)}")
         stats['invoices_processed'] += valid_invoices
         stats['items_processed'] += len(items_batch)
         
@@ -549,25 +546,25 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         stats['items_saved'] += saved
         stats['items_failed'] += failed
     
-    logger.info(f"📊 إحصائيات الفرع {branch_id}: {stats['invoices_processed']} فاتورة، {stats['items_processed']} بند")
+    logger.info(f"إحصائيات الفرع {branch_id}: {stats['invoices_processed']} فاتورة، {stats['items_processed']} بند")
     return stats
 
 
 def main():
     """الدالة الرئيسية"""
-    logger.info("🚀 بدء عملية جلب البيانات من دفترة...")
+    logger.info("بدء عملية جلب البيانات من دفترة...")
     
     # التحقق من المتغيرات المطلوبة
     if not all([DAFTRA_API_KEY, SUPABASE_URL, SUPABASE_KEY]):
-        logger.error("❌ متغيرات البيئة مفقودة!")
+        logger.error("متغيرات البيئة مفقودة!")
         return
     
     # إنشاء العملاء
     daftra_client = DaftraClient()
     supabase_client = SupabaseClient()
     
-    # 🆕 تصحيح البيانات القديمة أولاً
-    logger.info("🔧 بدء تصحيح أكواد المنتجات للبيانات الموجودة...")
+    # تصحيح البيانات القديمة أولاً
+    logger.info("بدء تصحيح أكواد المنتجات للبيانات الموجودة...")
     fix_stats = supabase_client.fix_existing_product_codes()
     
     # إحصائيات إجمالية
@@ -590,10 +587,10 @@ def main():
                 total_stats[key] += branch_stats[key]
                 
         except Exception as e:
-            logger.error(f"❌ خطأ في معالجة الفرع {branch_id}: {e}")
+            logger.error(f"خطأ في معالجة الفرع {branch_id}: {e}")
     
     # التقرير النهائي
-    logger.info("📊 إحصائيات المعالجة النهائية:")
+    logger.info("إحصائيات المعالجة النهائية:")
     logger.info(f"   - البيانات القديمة المُصححة: {fix_stats['fixed_count']}")
     logger.info(f"   - الفواتير المعالجة (جديدة): {total_stats['invoices_processed']}")
     logger.info(f"   - البنود المعالجة (جديدة): {total_stats['items_processed']}")
@@ -603,12 +600,12 @@ def main():
     logger.info(f"   - أخطاء البنود: {total_stats['items_failed']}")
     
     if total_stats['invoices_processed'] == 0 and fix_stats['fixed_count'] == 0:
-        logger.warning("⚠️ لا توجد فواتير للمعالجة ولا بيانات للتصحيح")
+        logger.warning("لا توجد فواتير للمعالجة ولا بيانات للتصحيح")
     
-    logger.info("🎉 انتهاء العملية - التقرير النهائي:")
-    logger.info(f"   🔧 البيانات المُصححة: {fix_stats['fixed_count']} بند")
-    logger.info(f"   📋 الفواتير الجديدة: {total_stats['invoices_saved']} نجحت، {total_stats['invoices_failed']} فشلت")
-    logger.info(f"   📝 البنود الجديدة: {total_stats['items_saved']} نجح، {total_stats['items_failed']} فشل")
+    logger.info("انتهاء العملية - التقرير النهائي:")
+    logger.info(f"   البيانات المُصححة: {fix_stats['fixed_count']} بند")
+    logger.info(f"   الفواتير الجديدة: {total_stats['invoices_saved']} نجحت، {total_stats['invoices_failed']} فشلت")
+    logger.info(f"   البنود الجديدة: {total_stats['items_saved']} نجح، {total_stats['items_failed']} فشل")
 
 
 # إضافة alias للتوافق مع main.py
