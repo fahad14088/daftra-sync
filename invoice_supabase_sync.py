@@ -329,31 +329,20 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         for invoice in invoices:
             invoice_id = invoice["id"]
 
-    # تحقق هل الفاتورة موجودة مسبقًا في قاعدة البيانات
-           check_url = f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{invoice_id}&select=id"
-           res_check = requests.get(check_url, headers=HEADERS_SB)
-        if res_check.status_code == 200 and res_check.json():
-           print(f"🟦 الفاتورة {invoice_id} موجودة مسبقًا وتم تجاهلها")
-         continue
-
-    # جلب تفاصيل الفاتورة مع البنود
-    invoice_details = daftra_client.fetch_invoice_details(str(invoice['id']))
-    if not invoice_details:
-        logger.warning(f"⚠️ فشل في جلب تفاصيل الفاتورة {invoice['id']}")
-        continue
-
-    # دمج البيانات الأساسية مع التفاصيل
-    full_invoice = {**invoice, **invoice_details}
-
-
+            # تحقق هل الفاتورة موجودة مسبقًا في قاعدة البيانات
+            check_url = f"{SUPABASE_URL}/rest/v1/invoices?id=eq.{invoice_id}&select=id"
+            res_check = requests.get(check_url, headers=HEADERS_SUPABASE)  # تصحيح اسم المتغير
             
+            if res_check.status_code == 200 and res_check.json():
+                print(f"🟦 الفاتورة {invoice_id} موجودة مسبقًا وتم تجاهلها")
+                continue
+
             # جلب تفاصيل الفاتورة مع البنود
             invoice_details = daftra_client.fetch_invoice_details(str(invoice['id']))
-            
             if not invoice_details:
                 logger.warning(f"⚠️ فشل في جلب تفاصيل الفاتورة {invoice['id']}")
                 continue
-            
+
             # دمج البيانات الأساسية مع التفاصيل
             full_invoice = {**invoice, **invoice_details}
             
@@ -399,11 +388,6 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
                 items_batch = []
         
         page += 1
-        
-        # حماية من الحلقات اللانهائية
-        # if page > 100:
-        #     logger.warning(f"⚠️ تم الوصول للحد الأقصى من الصفحات للفرع {branch_id}")
-        #     break
     
     # حفظ الدفعات المتبقية - الفواتير أولاً
     if invoices_batch:
@@ -422,6 +406,7 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
     
     logger.info(f"📊 إحصائيات الفرع {branch_id}: {stats['invoices_processed']} فاتورة، {stats['items_processed']} بند")
     return stats
+
 
 
 def main():
