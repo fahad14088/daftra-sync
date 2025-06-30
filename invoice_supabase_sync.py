@@ -97,13 +97,13 @@ class DataValidator:
                 logger.info(f"تم تصحيح الكود للمنتج {product_id}: '{wrong_code}' → '{correct_code}'")
         else:
             product_code = wrong_code
-        
+        subtotal_pre_tax_item = float(item.get('summary_subtotal', 0))
         cleaned = {
             'id': str(item.get('id', '')),
             'invoice_id': str(invoice_id),
             'quantity': float(item.get('quantity', 0)),
             'unit_price': float(item.get('unit_price', 0)),
-            'subtotal': float(item.get('subtotal', 0)),
+            'subtotal': subtotal_pre_tax_item,
             'product_id': product_id,
             'product_code': product_code,  # الكود الصحيح الآن
             'client_business_name': str(client_name)[:255],
