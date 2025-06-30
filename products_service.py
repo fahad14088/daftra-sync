@@ -81,9 +81,9 @@ def sync_products():
 }
 
     
-             payload = {k: v for k, v in payload.items() if v is not None and k != "id"}
+            payload = {k: v for k, v in payload.items() if v is not None and k != "id"}
 
-           print(">> upsert product:", payload)
+            print(">> upsert product:", payload)
 
             resp = requests.post(
                 f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
