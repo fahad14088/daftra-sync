@@ -69,18 +69,22 @@ def sync_products():
             )
 
             payload = {
-                "product_id":        pid,
-                "daftra_product_id": str(pid),
-                "product_code":      safe_text(code),
-                "name":              safe_text(prod.get("name", "")),
-                "stock_balance":     safe_number(prod.get("stock_balance", 0)),
-                "buy_price":         safe_number(prod.get("buy_price", 0)),
-                "average_price":     safe_number(prod.get("average_price", 0)),
-                "minimum_price":     safe_number(prod.get("minimum_price", 0)),
-                "supplier_code":     safe_text(prod.get("supplier_code", ""))
-            }
+    "product_id":        pid,
+    "daftra_product_id": str(pid),
+    "product_code":      safe_text(code),
+    "name":              safe_text(prod.get("name", "")),
+    "stock_balance":     safe_number(prod.get("stock_balance", 0)),
+    "buy_price":         safe_number(prod.get("buy_price", 0)),
+    "average_price":     safe_number(prod.get("average_price", 0)),
+    "minimum_price":     safe_number(prod.get("minimum_price", 0)),
+    "supplier_code":     safe_text(prod.get("supplier_code", ""))
+}
 
-            print(">> upsert product:", payload)
+# ✅ تنظيف الحقول: لا ترسل id ولا ترسل قيم null
+payload = {k: v for k, v in payload.items() if v is not None and k != "id"}
+
+print(">> upsert product:", payload)
+
             resp = requests.post(
                 f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
                 headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates"},
