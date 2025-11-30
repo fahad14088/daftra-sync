@@ -510,7 +510,9 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
         valid_invoices = 0
         
         for invoice in invoices:
-            invoice_id = invoice["id"]
+            inv = invoice.get("Invoice", invoice)  # ✅ فك تغليف الفاتورة
+
+            invoice_id = inv["id"]
 
             # تحقق هل الفاتورة موجودة مسبقًا في قاعدة البيانات
             check_url = f"{SUPABASE_URL}/invoices?id=eq.{invoice_id}&select=id"
@@ -521,13 +523,15 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
                 #continue
 
             # جلب تفاصيل الفاتورة مع البنود
-            invoice_details = daftra_client.fetch_invoice_details(str(invoice['id']))
+            invoice_details = daftra_client.fetch_invoice_details(str(inv['id']))
             if not invoice_details:
-                logger.warning(f"فشل في جلب تفاصيل الفاتورة {invoice['id']}")
+                logger.warning(f"فشل في جلب تفاصيل الفاتورة {inv['id']}")
                 continue
 
+            details_invoice = invoice_details.get("Invoice", {})  # ✅ خذ تفاصيل Invoice فقط
+
             # دمج البيانات الأساسية مع التفاصيل
-            full_invoice = {**invoice, **invoice_details}
+            full_invoice = {**inv, **details_invoice}
 
             # ✅ إضافة فقط: ربط staff_id بالاسم ووضعه داخل الفاتورة
             sid = str(full_invoice.get("staff_id", 0))
@@ -546,11 +550,11 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
                 for item in items:
                     if DataValidator.validate_item(item):
                         # تمرير supabase_client للحصول على الكود الصحيح
-                        cleaned_item = DataValidator.clean_item_data(item, invoice['id'], client_name, supabase_client)
+                        cleaned_item = DataValidator.clean_item_data(item, inv['id'], client_name, supabase_client)
                         items_batch.append(cleaned_item)
                         
             except Exception as e:
-                logger.error(f"خطأ في معالجة الفاتورة {invoice.get('id', 'غير معروف')}: {e}")
+                logger.error(f"خطأ في معالجة الفاتورة {inv.get('id', 'غير معروف')}: {e}")
                 continue
         
         logger.info(f"فرع {branch_id} - صفحة {page}: {valid_invoices} فاتورة صالحة من أصل {len(invoices)}")
