@@ -224,7 +224,7 @@ class SupabaseClient:
                         update_response = self.session.patch(
                             update_url, 
                             json=update_data, 
-                            timeout=10
+                            timeout=30
                         )
                         
                         if update_response.status_code == 204:
