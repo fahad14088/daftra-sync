@@ -19,6 +19,7 @@ REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "30"))
 MAX_RETRIES     = int(os.getenv("MAX_RETRIES", "3"))
 RETRY_DELAY     = int(os.getenv("RETRY_DELAY", "2"))
 
+
 # ====== Request helpers ======
 def fetch_with_retry(url, headers, retries=3, timeout=30):
     for i in range(retries):
@@ -33,21 +34,30 @@ def fetch_with_retry(url, headers, retries=3, timeout=30):
     return None
 
 
-def supabase_request_with_retry(method, url, headers=None, json=None, retries=MAX_RETRIES, timeout=REQUEST_TIMEOUT):
+def supabase_request_with_retry(
+    method,
+    url,
+    headers=None,
+    json=None,
+    retries=MAX_RETRIES,
+    timeout=REQUEST_TIMEOUT
+):
     """
     نفس فكرة fetch_with_retry لكن لـ Supabase.
-    - يعيد المحاولة فقط على timeouts/connection errors
-    - ما يغيّر منطقك، بس يمنع الكراش
+    - يعيد المحاولة على timeouts/connection errors
+    - لو كل المحاولات فشلت يرفع Exception (ونحن بنمسكه في مكان الاستدعاء عشان ما يرجع Page 1)
     """
+    last_err = None
     for i in range(retries):
         try:
             r = requests.request(method, url, headers=headers, json=json, timeout=timeout)
             return r
         except Exception as e:
+            last_err = e
             msg = str(e)
             print(f"! Supabase {method} error (try {i+1}/{retries}):", msg)
             if i == retries - 1:
-                raise
+                raise last_err
             time.sleep(RETRY_DELAY * (i + 1))
 
 
@@ -70,7 +80,13 @@ def sync_products():
 
     while True:
         url = f"{DAFTRA_URL}/v2/api/entity/product/list/1?page={page}&limit={limit}"
-        data = fetch_with_retry(url, HEADERS_DAFTRA, retries=MAX_RETRIES, timeout=REQUEST_TIMEOUT)
+        data = fetch_with_retry(
+            url,
+            HEADERS_DAFTRA,
+            retries=MAX_RETRIES,
+            timeout=REQUEST_TIMEOUT
+        )
+
         items = data.get("data", []) if data else []
         print(f"> Page {page}: found {len(items)} items")
         if not items:
@@ -107,13 +123,22 @@ def sync_products():
 
             print(">> upsert product:", payload)
 
-            # ====== نفس upsert السابق لكن مع timeout/retry ======
-            resp = supabase_request_with_retry(
-                "POST",
-                f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
-                headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates"},
-                json=payload,
-            )
+            # ====== مهم: لو فشل Supabase لا نكسر اللوب ولا نرجع Page 1 ======
+            try:
+                resp = supabase_request_with_retry(
+                    "POST",
+                    f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
+                    headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates"},
+                    json=payload,
+                )
+            except Exception as e:
+                print("! upsert failed, skipping product:", pid, "| error:", e)
+                continue  # يكمل على المنتج اللي بعده
+
+            # أمان إضافي لو رجّع None لأي سبب
+            if resp is None:
+                print("! upsert got no response, skipping product:", pid)
+                continue
 
             print(f"   → {resp.status_code} | {resp.text}")
             if resp.status_code == 201:
@@ -135,11 +160,15 @@ def sync_products():
 def fix_invoice_items_product_id_using_code():
     print("🔧 تصحيح شامل للبنود (product_id + product_code) من المنتجات...")
 
-    # 1. تحميل المنتجات (أضفنا timeout/retry)
+    # 1. تحميل المنتجات
     url_products = f"{SUPABASE_URL}/rest/v1/products?select=product_id,product_code,name"
-    res = supabase_request_with_retry("GET", url_products, headers=HEADERS_SB)
+    try:
+        res = supabase_request_with_retry("GET", url_products, headers=HEADERS_SB)
+    except Exception as e:
+        print("❌ فشل في جلب المنتجات بسبب خطأ اتصال:", e)
+        return
 
-    if res.status_code != 200:
+    if res is None or res.status_code != 200:
         print("❌ فشل في جلب المنتجات")
         return
 
@@ -164,9 +193,14 @@ def fix_invoice_items_product_id_using_code():
 
     while True:
         url_items = f"{SUPABASE_URL}/rest/v1/invoice_items?select=id,product_id,product_code&limit={limit}&offset={offset}"
-        res = supabase_request_with_retry("GET", url_items, headers=HEADERS_SB)
 
-        if res.status_code != 200:
+        try:
+            res = supabase_request_with_retry("GET", url_items, headers=HEADERS_SB)
+        except Exception as e:
+            print("❌ فشل في جلب البنود بسبب خطأ اتصال:", e)
+            break
+
+        if res is None or res.status_code != 200:
             print("❌ فشل في جلب البنود")
             break
 
@@ -193,13 +227,21 @@ def fix_invoice_items_product_id_using_code():
                     "product_code": new_code
                 }
 
-                # (أضفنا timeout/retry)
-                res_patch = supabase_request_with_retry(
-                    "PATCH",
-                    patch_url,
-                    headers=HEADERS_SB,
-                    json=patch_payload
-                )
+                # ====== مهم: لو PATCH فشل ما نرجع من البداية ======
+                try:
+                    res_patch = supabase_request_with_retry(
+                        "PATCH",
+                        patch_url,
+                        headers=HEADERS_SB,
+                        json=patch_payload
+                    )
+                except Exception as e:
+                    print("! patch failed, skipping item:", item_id, "| error:", e)
+                    continue
+
+                if res_patch is None:
+                    print("! patch got no response, skipping item:", item_id)
+                    continue
 
                 if res_patch.status_code in [200, 204]:
                     print(f"✅ بند {item_id} ← product_id = {new_pid} ، code = {new_code}")
