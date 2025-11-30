@@ -73,6 +73,11 @@ class DataValidator:
             'client_city': str(invoice.get('client_city', ''))[:100],
             'summary_paid': float(invoice.get('summary_paid', 0)),
             'summary_unpaid': float(invoice.get('summary_unpaid', 0)),
+
+            # ✅ إضافات فقط (بدون تعديل أي سطر قديم)
+            'staff_id': int(invoice.get('staff_id', 0)),
+            'staff_name': str(invoice.get('staff_name', ''))[:255],
+
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat(),
         }
@@ -316,6 +321,39 @@ class DaftraClient:
         self.headers = HEADERS_DAFTRA
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+
+    # ✅ إضافة فقط: جلب الموظفين كخريطة id->name
+    def fetch_staff_map(self) -> Dict[str, str]:
+        staff_map = {}
+        page = 1
+        limit = 100
+
+        while True:
+            url = os.getenv("DAFTRA_URL", "https://shadowpeace.daftra.com") + f"/api2/staff?limit={limit}&page={page}"
+            try:
+                r = self.session.get(url, timeout=30)
+                if r.status_code != 200:
+                    break
+
+                data = r.json().get("data", [])
+                if not data:
+                    break
+
+                for row in data:
+                    s = row.get("Staff", {})
+                    sid = str(s.get("id", ""))
+                    name = str(s.get("name", "")).strip()
+                    if sid and name:
+                        staff_map[sid] = name
+
+                page += 1
+                time.sleep(0.3)
+            except Exception as e:
+                logger.error(f"خطأ بجلب الموظفين: {e}")
+                break
+
+        logger.info(f"تم تحميل {len(staff_map)} موظف من دفترة")
+        return staff_map
     
     def fetch_invoices(self, branch_id: int, page: int = 1) -> Dict[str, Any]:
         """جلب قائمة الفواتير من فرع معين"""
@@ -437,6 +475,9 @@ def fetch_missing_items(daftra_client: DaftraClient, supabase_client: SupabaseCl
 def process_branch_invoices(daftra_client: DaftraClient, supabase_client: SupabaseClient, branch_id: int) -> Dict[str, int]:
     """معالجة فواتير فرع واحد"""
     logger.info(f"بدء معالجة الفرع {branch_id}")
+
+    # ✅ إضافة فقط: تحميل الموظفين مرة واحدة
+    staff_map = daftra_client.fetch_staff_map()
     
     stats = {
         'invoices_processed': 0,
@@ -477,7 +518,7 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
             
             if res_check.status_code == 200 and res_check.json():
                 logger.info(f"الفاتورة {invoice_id} موجودة مسبقًا وتم تجاهلها")
-                continue
+                #continue
 
             # جلب تفاصيل الفاتورة مع البنود
             invoice_details = daftra_client.fetch_invoice_details(str(invoice['id']))
@@ -487,6 +528,10 @@ def process_branch_invoices(daftra_client: DaftraClient, supabase_client: Supaba
 
             # دمج البيانات الأساسية مع التفاصيل
             full_invoice = {**invoice, **invoice_details}
+
+            # ✅ إضافة فقط: ربط staff_id بالاسم ووضعه داخل الفاتورة
+            sid = str(full_invoice.get("staff_id", 0))
+            full_invoice["staff_name"] = staff_map.get(sid, "")
             
             # تنظيف بيانات الفاتورة
             try:
