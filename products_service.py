@@ -89,7 +89,7 @@ def sync_products():
                 f"{SUPABASE_URL}/rest/v1/products?on_conflict=product_id",
                 headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates"},
                 json=payload,
-                timeout=10
+                timeout=30
             )
             print(f"   → {resp.status_code} | {resp.text}")
             if resp.status_code == 201:
